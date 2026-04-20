@@ -75,6 +75,19 @@ VLAN_SUBNETS = {
 
 DMZ_SUBNET = Subnet("172.16.200.0/24", "172.16.200.1")
 
+# Linux interface name limit is 15 chars. Mininet creates ifnames like:
+#   <host>-eth0
+# so keep host names short to avoid "name not a valid ifname" errors.
+DEPT_ABBR = {
+    "admin": "ad",
+    "sales": "sa",
+    "eng": "en",
+    "qa": "qa",
+    "finance": "fi",
+    "hr": "hr",
+    "it": "it",
+}
+
 # Router links
 CORE_DIST1_CORE_IP = "10.255.0.1/30"
 CORE_DIST1_DIST_IP = "10.255.0.2/30"
@@ -148,13 +161,12 @@ class CampusTopo(Topo):
             if dept not in access_switches:
                 continue
             sw = access_switches[dept]
+            ab = DEPT_ABBR.get(dept, dept[:2])
             # Use .11, .21, .31 for (pc, phone, printer) in each /24
-            base = int(subnet.gw.split(".")[-1])  # 1
-            del base
             host_specs = [
-                (f"{dept}_pc1", subnet.cidr.split("/")[0].rsplit(".", 1)[0] + ".11/24"),
-                (f"{dept}_phone1", subnet.cidr.split("/")[0].rsplit(".", 1)[0] + ".21/24"),
-                (f"{dept}_printer1", subnet.cidr.split("/")[0].rsplit(".", 1)[0] + ".31/24"),
+                (f"{ab}_pc1", subnet.cidr.split("/")[0].rsplit(".", 1)[0] + ".11/24"),
+                (f"{ab}_ph1", subnet.cidr.split("/")[0].rsplit(".", 1)[0] + ".21/24"),
+                (f"{ab}_pr1", subnet.cidr.split("/")[0].rsplit(".", 1)[0] + ".31/24"),
             ]
             for hname, hip in host_specs:
                 h = self.addHost(hname, ip=None)
@@ -333,8 +345,15 @@ def configure(net: Mininet) -> None:
     for dept, subnet in VLAN_SUBNETS.items():
         if dept == "mgmt":
             continue
+        ab = DEPT_ABBR.get(dept, dept[:2])
         for suffix, role in [("11", "pc1"), ("21", "phone1"), ("31", "printer1")]:
-            hname = f"{dept}_{role}"
+            # Keep consistent with short hostnames created in topology build()
+            if role == "pc1":
+                hname = f"{ab}_pc1"
+            elif role == "phone1":
+                hname = f"{ab}_ph1"
+            else:
+                hname = f"{ab}_pr1"
             if hname not in net:
                 continue
             ip_prefix = subnet.cidr.split("/")[0].rsplit(".", 1)[0]
@@ -369,8 +388,9 @@ def mn_cleanup() -> None:
     info("*** Cleanup old Mininet state...\n")
     os.system("rm -f /var/run/netns/core /var/run/netns/dist1 /var/run/netns/dist2 /var/run/netns/internet 2>/dev/null")
     os.system("sudo mn -c 2>/dev/null")
-    os.system("iptables -t nat -F 2>/dev/null")
-    os.system("iptables -F 2>/dev/null")
+    # IMPORTANT: Do NOT flush host (VM) iptables here.
+    # We only manage iptables inside the Mininet router namespace(s), e.g. core.cmd("iptables ..."),
+    # to avoid breaking the VM's own network/DNS connectivity.
 
 
 def run() -> None:
