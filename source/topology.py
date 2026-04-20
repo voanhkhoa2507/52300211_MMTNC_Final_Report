@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Campus 3-layer topology (Core -> Distribution -> Access) + DMZ on Mininet.
+Mô hình Campus 3 lớp (Core -> Distribution -> Access) + vùng DMZ trên Mininet.
 
-Confirmed IP plan (summary):
-- VLAN subnets (Inside):
+Tóm tắt IP plan đã chốt:
+- Các VLAN Inside:
   VLAN10  Admin        10.10.10.0/24   GW 10.10.10.1
   VLAN20  Sales        10.10.20.0/24   GW 10.10.20.1
   VLAN30  Engineering  10.10.30.0/24   GW 10.10.30.1
@@ -14,20 +14,20 @@ Confirmed IP plan (summary):
   VLAN99  Mgmt         10.10.99.0/24   GW 10.10.99.1
 - DMZ: 172.16.200.0/24, GW 172.16.200.1
 - Public/Outside: 203.0.113.0/24
-  core outside: 203.0.113.2/24, internet host: 203.0.113.1/24
-- OSPF/Router links (/30):
+  core outside: 203.0.113.2/24, host internet: 203.0.113.1/24
+- Các link giữa router (/30):
   core <-> dist1: 10.255.0.0/30  core=10.255.0.1  dist1=10.255.0.2
   core <-> dist2: 10.255.0.4/30  core=10.255.0.5  dist2=10.255.0.6
 
-NAT plan (on core router):
-- PAT (MASQUERADE) for 10.10.0.0/16 out to 203.0.113.0/24
-- Static NAT (DNAT) for DMZ servers:
+Kế hoạch NAT (đặt trên router core):
+- PAT (MASQUERADE) cho 10.10.0.0/16 đi ra ngoài qua core-out
+- Static NAT (DNAT) cho các server DMZ (Public -> DMZ):
   203.0.113.11 -> 172.16.200.11 (web1, tcp 80/443)
   203.0.113.12 -> 172.16.200.12 (web2, tcp 80/443)
   203.0.113.53 -> 172.16.200.53 (dns, udp/tcp 53)
 
-ACLs are applied by source/acl.sh via ip netns exec. This file creates
-/var/run/netns/<node> symlinks so acl.sh can target namespaces by name.
+ACL được áp bởi source/acl.sh thông qua `ip netns exec`.
+File này tạo symlink `/var/run/netns/<node>` để script gọi namespace theo tên.
 """
 
 import os
@@ -43,7 +43,7 @@ from mininet.topo import Topo
 
 
 class LinuxRouter(Node):
-    """A Node with IPv4 forwarding enabled (acts as a router)."""
+    """Node chạy như Router Linux (bật IPv4 forwarding)."""
 
     def config(self, **params):
         super().config(**params)
@@ -75,9 +75,9 @@ VLAN_SUBNETS = {
 
 DMZ_SUBNET = Subnet("172.16.200.0/24", "172.16.200.1")
 
-# Linux interface name limit is 15 chars. Mininet creates ifnames like:
+# Linux giới hạn tên interface 15 ký tự (IFNAMSIZ=15). Mininet thường tạo tên:
 #   <host>-eth0
-# so keep host names short to avoid "name not a valid ifname" errors.
+# nên cần giữ hostname ngắn để tránh lỗi: "name not a valid ifname".
 DEPT_ABBR = {
     "admin": "ad",
     "sales": "sa",
@@ -101,29 +101,29 @@ INTERNET_IP = "203.0.113.1/24"
 
 class CampusTopo(Topo):
     def build(self):
-        # Routers (Linux namespaces)
+        # Router L3 (Linux namespace)
         core = self.addHost("core", cls=LinuxRouter, ip=None)
         dist1 = self.addHost("dist1", cls=LinuxRouter, ip=None)
         dist2 = self.addHost("dist2", cls=LinuxRouter, ip=None)
 
-        # Internet host (outside)
+        # Host Internet giả lập (Outside)
         internet = self.addHost("internet", ip=None)
 
-        # Distribution <-> Core links
+        # Link Core <-> Distribution
         self.addLink(core, dist1, intfName1="core-d1", intfName2="d1-core")
         self.addLink(core, dist2, intfName1="core-d2", intfName2="d2-core")
 
-        # Core <-> Internet link (outside)
+        # Link Core <-> Internet (Outside)
         self.addLink(core, internet, intfName1="core-out", intfName2="inet0")
 
         def add_ovs_switch(name: str, dpid_int: int) -> str:
             """
-            Explicit DPID is required on some systems; otherwise OVSSwitch may fail with:
+            Một số môi trường cần gán DPID tường minh, nếu không OVSSwitch có thể lỗi:
               'Unable to derive default datapath ID'
             """
             return self.addSwitch(name, cls=OVSSwitch, stp=True, dpid=f"{dpid_int:016x}")
 
-        # Access switches (one per department/VLAN) with explicit DPIDs
+        # Switch Access (mỗi phòng ban/VLAN một switch) + DPID tường minh
         access_switches = {
             "admin": add_ovs_switch("acc_admin", 101),
             "sales": add_ovs_switch("acc_sales", 102),
@@ -134,7 +134,7 @@ class CampusTopo(Topo):
             "it": add_ovs_switch("acc_it", 107),
         }
 
-        # Map VLANs to one of the two distributions (load share)
+        # Chia VLAN về 2 Distribution để cân bằng mô phỏng (load share)
         dist_map = {
             "admin": dist1,
             "sales": dist1,
@@ -145,10 +145,9 @@ class CampusTopo(Topo):
             "it": dist2,
         }
 
-        # Uplink each access switch to its distribution router.
-        # IMPORTANT: Do NOT force long interface names on the switch side.
-        # Linux IFNAMSIZ is 15 chars; names like "acc_admin-uplink" will fail.
-        # Let Mininet auto-generate "acc_admin-ethX" instead.
+        # Uplink mỗi access switch lên Distribution.
+        # LƯU Ý: KHÔNG đặt tên interface dài phía switch (ví dụ "acc_admin-uplink" sẽ lỗi)
+        # do giới hạn 15 ký tự. Để Mininet tự sinh "acc_admin-ethX" cho an toàn.
         for dept, sw in access_switches.items():
             if dept not in dist_map:
                 continue
@@ -156,8 +155,8 @@ class CampusTopo(Topo):
             dist_name = "dist1" if dist is dist1 else "dist2"
             self.addLink(dist_name, sw, intfName1=f"{dist_name}-{dept}")
 
-        # Hosts per department (PC, IP phone, printer) - small but representative
-        # You can scale counts later without changing routing/NAT/ACL design.
+        # Host mỗi phòng ban (PC, IP phone, printer) - tạo ít nhưng đủ đại diện để test.
+        # Có thể tăng số lượng sau mà không phải đổi thiết kế routing/NAT/ACL.
         for dept, subnet in VLAN_SUBNETS.items():
             if dept == "mgmt":
                 continue
@@ -165,7 +164,7 @@ class CampusTopo(Topo):
                 continue
             sw = access_switches[dept]
             ab = DEPT_ABBR.get(dept, dept[:2])
-            # Use .11, .21, .31 for (pc, phone, printer) in each /24
+            # Dùng .11, .21, .31 tương ứng (pc, phone, printer) trong mỗi /24
             host_specs = [
                 (f"{ab}_pc1", subnet.cidr.split("/")[0].rsplit(".", 1)[0] + ".11/24"),
                 (f"{ab}_ph1", subnet.cidr.split("/")[0].rsplit(".", 1)[0] + ".21/24"),
@@ -175,9 +174,9 @@ class CampusTopo(Topo):
                 h = self.addHost(hname, ip=None)
                 self.addLink(h, sw)
 
-        # DMZ segment: switch + servers (explicit DPID)
+        # Vùng DMZ: 1 switch + các server DMZ (DPID tường minh)
         dmz_sw = add_ovs_switch("dmz_sw", 201)
-        # Same interface-name constraint on the switch side; let Mininet choose dmz_sw-ethX
+        # Cũng không đặt tên interface dài phía switch; để Mininet tự sinh dmz_sw-ethX
         self.addLink("dist1", dmz_sw, intfName1="dist1-dmz")
 
         dmz_web1 = self.addHost("dmz_web1", ip=None)
@@ -191,7 +190,7 @@ class CampusTopo(Topo):
 
 def _ensure_netns_symlinks(net: Mininet) -> None:
     """
-    Create /var/run/netns/<node> symlinks so scripts can use:
+    Tạo symlink /var/run/netns/<node> để script bên ngoài gọi:
       ip netns exec <node> ...
     """
     os.system("mkdir -p /var/run/netns 2>/dev/null")
@@ -210,21 +209,21 @@ def _config_host_ip(host, ip_cidr: str, gw_ip: str) -> None:
 
 def _try_enable_ospf_or_static(net: Mininet) -> str:
     """
-    Attempt to enable OSPF (FRR/quagga) if available; otherwise install static routes.
-    Returns the mode: 'ospf' or 'static'.
+    Thử bật OSPF (FRR/Quagga) nếu máy có sẵn; nếu không thì dùng static route.
+    Trả về mode: 'ospf' hoặc 'static'.
     """
-    # Minimal detection: vtysh presence and ospfd binary.
+    # Dò nhanh: có vtysh và ospfd/zebra hay không.
     has_vtysh = os.path.exists("/usr/bin/vtysh") or os.path.exists("/usr/local/bin/vtysh")
     has_ospfd = os.path.exists("/usr/lib/frr/ospfd") or os.path.exists("/usr/lib/quagga/ospfd")
     has_zebra = os.path.exists("/usr/lib/frr/zebra") or os.path.exists("/usr/lib/quagga/zebra")
 
     if has_vtysh and has_ospfd and has_zebra:
-        info("*** Detected FRR/Quagga. Attempting OSPF enable via vtysh (best-effort)...\n")
+        info("*** Phát hiện FRR/Quagga. Thử cấu hình OSPF bằng vtysh (best-effort)...\n")
 
         def vty(node, cmds: str) -> None:
             node.cmd(f"bash -lc 'printf \"%s\" \"{cmds}\" | vtysh -b' >/dev/null 2>&1")
 
-        # Start daemons if service isn't running inside namespaces. Best-effort.
+        # Khởi chạy zebra/ospfd trong namespace (best-effort).
         for r in ["core", "dist1", "dist2"]:
             node = net[r]
             node.cmd("mkdir -p /var/run/frr /tmp/frr 2>/dev/null")
@@ -238,47 +237,47 @@ def _try_enable_ospf_or_static(net: Mininet) -> str:
         vty(net["dist1"], "conf t\nrouter ospf\nospf router-id 2.2.2.2\nend\n")
         vty(net["dist2"], "conf t\nrouter ospf\nospf router-id 3.3.3.3\nend\n")
 
-        # Network statements (keep small: p2p + VLANs + DMZ + outside on core)
+        # Khai báo network (gọn: p2p + VLANs + DMZ + outside trên core)
         vty(net["core"], "conf t\nrouter ospf\nnetwork 10.255.0.0/30 area 0\nnetwork 10.255.0.4/30 area 0\nnetwork 203.0.113.0/24 area 0\nend\n")
         vty(net["dist1"], "conf t\nrouter ospf\nnetwork 10.255.0.0/30 area 0\nnetwork 10.10.10.0/24 area 0\nnetwork 10.10.20.0/24 area 0\nnetwork 10.10.50.0/24 area 0\nnetwork 10.10.60.0/24 area 0\nnetwork 172.16.200.0/24 area 0\nend\n")
         vty(net["dist2"], "conf t\nrouter ospf\nnetwork 10.255.0.4/30 area 0\nnetwork 10.10.30.0/24 area 0\nnetwork 10.10.40.0/24 area 0\nnetwork 10.10.70.0/24 area 0\nend\n")
 
-        info("*** OSPF configured (best-effort). Waiting 5s for convergence...\n")
+        info("*** Đã cấu hình OSPF (best-effort). Đợi 5s cho hội tụ...\n")
         time.sleep(5)
         return "ospf"
 
-    info("*** FRR/Quagga not available. Using static routes.\n")
+    info("*** Không có FRR/Quagga. Chuyển sang static route.\n")
 
     # Static routes:
-    # - Dist routers default route to core.
+    # - dist1/dist2 default route về core
     net["dist1"].cmd("ip route replace default via 10.255.0.1")
     net["dist2"].cmd("ip route replace default via 10.255.0.5")
-    # - Core routes to VLANs behind dist routers, plus DMZ behind dist1.
+    # - core route về các VLAN phía dist và DMZ phía dist1
     for cidr in ["10.10.10.0/24", "10.10.20.0/24", "10.10.50.0/24", "10.10.60.0/24", "172.16.200.0/24"]:
         net["core"].cmd(f"ip route replace {cidr} via 10.255.0.2")
     for cidr in ["10.10.30.0/24", "10.10.40.0/24", "10.10.70.0/24"]:
         net["core"].cmd(f"ip route replace {cidr} via 10.255.0.6")
 
-    # Default route out from core to internet host (simulate ISP gateway)
+    # Default route từ core ra internet host (mô phỏng ISP gateway)
     net["core"].cmd("ip route replace default via 203.0.113.1")
     return "static"
 
 
 def _setup_nat(core) -> None:
     """
-    Configure PAT + Static NAT for DMZ on core router using iptables.
+    Cấu hình PAT + Static NAT cho DMZ trên router core bằng iptables.
     """
     core.cmd("iptables -t nat -F")
     core.cmd("iptables -F")
 
-    # Allow forwarding (baseline)
+    # Baseline: chặn forward mặc định, chỉ cho phép ESTABLISHED/RELATED
     core.cmd("iptables -P FORWARD DROP")
     core.cmd("iptables -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT")
 
-    # PAT overload for inside users
+    # PAT (Overload) cho người dùng inside
     core.cmd("iptables -t nat -A POSTROUTING -s 10.10.0.0/16 -o core-out -j MASQUERADE")
 
-    # DMZ servers static NAT (DNAT) from public pool
+    # Static NAT inbound (DNAT) từ Public IP về DMZ server
     # Web1 203.0.113.11 -> 172.16.200.11
     core.cmd("iptables -t nat -A PREROUTING -i core-out -p tcp -d 203.0.113.11 -m multiport --dports 80,443 -j DNAT --to-destination 172.16.200.11")
     core.cmd("iptables -A FORWARD -i core-out -o core-d1 -p tcp -d 172.16.200.11 -m multiport --dports 80,443 -j ACCEPT")
@@ -293,38 +292,38 @@ def _setup_nat(core) -> None:
     core.cmd("iptables -A FORWARD -i core-out -o core-d1 -p udp -d 172.16.200.53 --dport 53 -j ACCEPT")
     core.cmd("iptables -A FORWARD -i core-out -o core-d1 -p tcp -d 172.16.200.53 --dport 53 -j ACCEPT")
 
-    # Allow inside -> internet (basic). ACL hardening is done by acl.sh, not here.
+    # Cho phép inside -> internet (mức cơ bản). ACL chi tiết nằm trong acl.sh.
     core.cmd("iptables -A FORWARD -i core-d1 -o core-out -s 10.10.0.0/16 -j ACCEPT")
     core.cmd("iptables -A FORWARD -i core-d2 -o core-out -s 10.10.0.0/16 -j ACCEPT")
 
-    # Allow DMZ -> internet (useful for DNS updates etc.)
+    # Cho phép DMZ -> internet (phục vụ lab; có thể siết chặt thêm ở ACL)
     core.cmd("iptables -A FORWARD -i core-d1 -o core-out -s 172.16.200.0/24 -j ACCEPT")
     core.cmd("iptables -t nat -A POSTROUTING -s 172.16.200.0/24 -o core-out -j MASQUERADE")
 
 
 def configure(net: Mininet) -> None:
-    info("*** Linking network namespaces for ip netns exec...\n")
+    info("*** Liên kết namespace để dùng ip netns exec...\n")
     _ensure_netns_symlinks(net)
 
-    info("*** Configuring router interfaces (core/dist)...\n")
+    info("*** Cấu hình IP các cổng router (core/dist)...\n")
     core = net["core"]
     dist1 = net["dist1"]
     dist2 = net["dist2"]
     internet = net["internet"]
 
-    # Core <-> Dist links
+    # Link core <-> dist
     core.cmd(f"ip addr add {CORE_DIST1_CORE_IP} dev core-d1")
     dist1.cmd(f"ip addr add {CORE_DIST1_DIST_IP} dev d1-core")
     core.cmd(f"ip addr add {CORE_DIST2_CORE_IP} dev core-d2")
     dist2.cmd(f"ip addr add {CORE_DIST2_DIST_IP} dev d2-core")
 
-    # Core outside and internet host
+    # Cổng outside của core và host internet
     core.cmd(f"ip addr add {CORE_OUTSIDE_IP} dev core-out")
     internet.cmd(f"ip addr add {INTERNET_IP} dev inet0")
     internet.cmd("ip route replace default via 203.0.113.2")
 
-    # Dist VLAN gateway interfaces to access switches
-    # dist1 owns: admin,sales,finance,hr + DMZ
+    # Gateway VLAN trên Distribution nối xuống Access
+    # dist1 quản lý: admin,sales,finance,hr + DMZ
     dist1_vlan_ifaces = {
         "admin": ("dist1-admin", VLAN_SUBNETS["admin"].gw + "/24"),
         "sales": ("dist1-sales", VLAN_SUBNETS["sales"].gw + "/24"),
@@ -335,7 +334,7 @@ def configure(net: Mininet) -> None:
     for _, (ifname, ip_cidr) in dist1_vlan_ifaces.items():
         dist1.cmd(f"ip addr add {ip_cidr} dev {ifname}")
 
-    # dist2 owns: eng,qa,it
+    # dist2 quản lý: eng,qa,it
     dist2_vlan_ifaces = {
         "eng": ("dist2-eng", VLAN_SUBNETS["eng"].gw + "/24"),
         "qa": ("dist2-qa", VLAN_SUBNETS["qa"].gw + "/24"),
@@ -344,14 +343,14 @@ def configure(net: Mininet) -> None:
     for _, (ifname, ip_cidr) in dist2_vlan_ifaces.items():
         dist2.cmd(f"ip addr add {ip_cidr} dev {ifname}")
 
-    # Configure department hosts: /24 + default GW at their VLAN gateway
-    info("*** Configuring access hosts IP/gateway...\n")
+    # Cấu hình IP host phòng ban: /24 + default GW theo VLAN
+    info("*** Cấu hình IP/gateway cho các host Access...\n")
     for dept, subnet in VLAN_SUBNETS.items():
         if dept == "mgmt":
             continue
         ab = DEPT_ABBR.get(dept, dept[:2])
         for suffix, role in [("11", "pc1"), ("21", "phone1"), ("31", "printer1")]:
-            # Keep consistent with short hostnames created in topology build()
+            # Đồng bộ với hostname ngắn đã tạo ở phần build()
             if role == "pc1":
                 hname = f"{ab}_pc1"
             elif role == "phone1":
@@ -364,37 +363,35 @@ def configure(net: Mininet) -> None:
             hip = f"{ip_prefix}.{suffix}/24"
             _config_host_ip(net[hname], hip, subnet.gw)
 
-    # DMZ servers
+    # Server DMZ
     _config_host_ip(net["dmz_web1"], "172.16.200.11/24", DMZ_SUBNET.gw)
     _config_host_ip(net["dmz_web2"], "172.16.200.12/24", DMZ_SUBNET.gw)
     _config_host_ip(net["dmz_dns"], "172.16.200.53/24", DMZ_SUBNET.gw)
 
-    # Routing: OSPF if available else static
-    info("*** Configuring routing (OSPF if available, else static routes)...\n")
+    # Định tuyến: ưu tiên OSPF nếu có, nếu không thì static route
+    info("*** Cấu hình định tuyến (OSPF nếu có, nếu không thì static route)...\n")
     mode = _try_enable_ospf_or_static(net)
-    info(f"*** Routing mode: {mode}\n")
+    info(f"*** Chế độ định tuyến: {mode}\n")
 
-    # NAT/PAT on core
-    info("*** Configuring NAT/PAT (core)...\n")
+    # NAT/PAT trên core
+    info("*** Cấu hình NAT/PAT (trên core)...\n")
     _setup_nat(core)
 
-    info("*** Done. You can now test in CLI.\n")
-    info("    Examples:\n")
-    info("      mininet> admin_pc1 ping -c 2 203.0.113.1\n")
-    info("      mininet> admin_pc1 ping -c 2 8.8.8.8   (if you add further upstream)\n")
-    info("      mininet> internet ping -c 2 203.0.113.11   (public -> dmz_web1)\n")
-    info("      mininet> internet nc -zv 203.0.113.11 80   (if netcat is installed)\n")
-    info("      Apply ACLs: sudo bash source/acl.sh\n")
-    info("      Drop ACLs : sudo bash source/acl.sh dropacl\n")
+    info("*** Hoàn tất. Bạn có thể test trong CLI.\n")
+    info("    Ví dụ:\n")
+    info("      mininet> ad_pc1 ping -c 2 203.0.113.1\n")
+    info("      mininet> internet ping -c 2 203.0.113.11\n")
+    info("      Áp ACL  : sudo bash source/acl.sh\n")
+    info("      Gỡ ACL  : sudo bash source/acl.sh dropacl\n")
 
 
 def mn_cleanup() -> None:
-    info("*** Cleanup old Mininet state...\n")
+    info("*** Dọn dẹp trạng thái Mininet cũ...\n")
     os.system("rm -f /var/run/netns/core /var/run/netns/dist1 /var/run/netns/dist2 /var/run/netns/internet 2>/dev/null")
     os.system("sudo mn -c 2>/dev/null")
-    # IMPORTANT: Do NOT flush host (VM) iptables here.
-    # We only manage iptables inside the Mininet router namespace(s), e.g. core.cmd("iptables ..."),
-    # to avoid breaking the VM's own network/DNS connectivity.
+    # QUAN TRỌNG: KHÔNG flush iptables của máy Ubuntu VM tại đây.
+    # Ta chỉ cấu hình iptables bên trong namespace router của Mininet (ví dụ core.cmd("iptables ..."))
+    # để tránh làm VM mất mạng/DNS.
 
 
 def run() -> None:

@@ -1,37 +1,36 @@
 #!/bin/bash
 #
-# Campus multi-layer ACL (iptables) for:
-# - Standard ACL (source-based)
-# - Extended ACL (service-based: port 80/443)
-# - Boundary firewall rules (internet <-> DMZ)
+# ACL bảo mật đa lớp (iptables) cho mô hình Campus:
+# - Standard ACL (lọc theo nguồn)
+# - Extended ACL (lọc theo dịch vụ: port 80/443)
+# - Firewall biên (Internet <-> DMZ)
 #
-# This script targets Mininet namespaces created by source/topology.py:
+# Script này áp rule lên các namespace do source/topology.py tạo:
 #   ip netns exec core/dist1/dist2/...
 #
-# Usage:
-#   sudo bash source/acl.sh          # apply_acl
-#   sudo bash source/acl.sh dropacl  # drop_acl (flush)
+# Cách dùng:
+#   sudo bash source/acl.sh          # apply_acl (áp ACL)
+#   sudo bash source/acl.sh dropacl  # drop_acl (gỡ/flush ACL)
 
 set -euo pipefail
 
 NS() { ip netns exec "$1" "${@:2}"; }
 
 # -------------------------------
-# Apply ACLs
+# Áp ACL
 # -------------------------------
 apply_acl() {
   echo "[ACL] Applying multi-layer ACL rules..."
 
-  # ---------- Base flush (clean old rules) ----------
+  # ---------- Dọn rule cũ ----------
   for n in core dist1 dist2; do
     NS "$n" iptables -F || true
     NS "$n" iptables -t nat -F || true
     NS "$n" iptables -X || true
   done
 
-  # ---------- Default policies ----------
-  # Keep router INPUT permissive for lab (avoid locking yourself out in Mininet),
-  # enforce policy mainly on FORWARD.
+  # ---------- Chính sách mặc định ----------
+  # Giữ INPUT thoáng để tránh “tự khóa” khi lab; siết chủ yếu ở FORWARD.
   for n in core dist1 dist2; do
     NS "$n" iptables -P INPUT ACCEPT
     NS "$n" iptables -P OUTPUT ACCEPT
@@ -40,75 +39,76 @@ apply_acl() {
   done
 
   # =========================================================
-  # STANDARD ACL (source-based) - example policy per confirmed plan:
-  # - Block Sales (10.10.20.0/24) from reaching DMZ subnet (172.16.200.0/24)
-  #   Apply near the destination: on dist1 (which connects to DMZ).
+  # STANDARD ACL (lọc theo nguồn) - theo kế hoạch đã chốt:
+  # - Chặn Sales (10.10.20.0/24) truy cập DMZ (172.16.200.0/24)
+  # - Áp gần đích (dist1 là nơi nối DMZ)
   # =========================================================
-  echo "[ACL] Standard ACL: deny Sales -> DMZ (source-based)"
+  echo "[ACL] Standard ACL: chặn Sales -> DMZ (lọc theo nguồn)"
   NS dist1 iptables -A FORWARD -s 10.10.20.0/24 -d 172.16.200.0/24 -j DROP \
     -m comment --comment "STD: Deny Sales VLAN20 -> DMZ"
 
-  # Permit remaining inside -> DMZ is governed by Extended ACL below.
+  # Các luồng inside -> DMZ còn lại sẽ được kiểm soát bởi Extended ACL bên dưới.
 
   # =========================================================
-  # EXTENDED ACL (service-based) inside -> DMZ
-  # - Permit inside users (10.10.0.0/16) to DMZ Web (80/443) and DNS (53)
-  # - Deny other inside -> DMZ services (default deny)
-  # Apply on dist1 (DMZ boundary at Distribution layer).
+  # EXTENDED ACL (lọc theo dịch vụ) Inside -> DMZ
+  # - Cho phép inside (10.10.0.0/16) vào DMZ đúng dịch vụ:
+  #     Web TCP 80/443, DNS UDP/TCP 53
+  # - Còn lại: chặn (default deny)
+  # - Áp trên dist1 (biên DMZ ở lớp Distribution)
   # =========================================================
-  echo "[ACL] Extended ACL: allow Inside -> DMZ only web(80/443) + dns(53)"
+  echo "[ACL] Extended ACL: Inside -> DMZ chỉ cho web(80/443) + dns(53)"
 
-  # Allow HTTP/HTTPS to DMZ web servers
+  # Cho phép HTTP/HTTPS tới Web servers DMZ
   NS dist1 iptables -A FORWARD -s 10.10.0.0/16 -d 172.16.200.11/32 -p tcp -m multiport --dports 80,443 -j ACCEPT \
     -m comment --comment "EXT: Inside -> dmz_web1 TCP 80/443 permit"
   NS dist1 iptables -A FORWARD -s 10.10.0.0/16 -d 172.16.200.12/32 -p tcp -m multiport --dports 80,443 -j ACCEPT \
     -m comment --comment "EXT: Inside -> dmz_web2 TCP 80/443 permit"
 
-  # Allow DNS queries to DMZ DNS server
+  # Cho phép truy vấn DNS tới DNS server DMZ
   NS dist1 iptables -A FORWARD -s 10.10.0.0/16 -d 172.16.200.53/32 -p udp --dport 53 -j ACCEPT \
     -m comment --comment "EXT: Inside -> dmz_dns UDP 53 permit"
   NS dist1 iptables -A FORWARD -s 10.10.0.0/16 -d 172.16.200.53/32 -p tcp --dport 53 -j ACCEPT \
     -m comment --comment "EXT: Inside -> dmz_dns TCP 53 permit"
 
-  # Deny all other Inside -> DMZ traffic (explicit drop for clarity)
+  # Chặn tất cả inside -> DMZ còn lại (drop tường minh để dễ đọc rule)
   NS dist1 iptables -A FORWARD -s 10.10.0.0/16 -d 172.16.200.0/24 -j DROP \
     -m comment --comment "EXT: Inside -> DMZ deny all other services"
 
   # =========================================================
-  # BOUNDARY FIREWALL (internet <-> DMZ)
-  # Apply on core router: traffic coming from outside (core-out) into inside (core-d1).
-  # Permit only:
-  # - Internet -> DMZ Web: TCP 80/443 to public VIPs (DNAT done by topology NAT)
-  # - Internet -> DMZ DNS: UDP/TCP 53 to public VIP
-  # Deny other inbound to DMZ.
+  # FIREWALL BIÊN (Internet <-> DMZ)
+  # Áp trên core: lưu lượng từ outside (core-out) vào trong (core-d1).
+  # Chỉ cho phép:
+  # - Internet -> DMZ Web: TCP 80/443 (DNAT đã cấu hình trong topology NAT)
+  # - Internet -> DMZ DNS: UDP/TCP 53
+  # Còn lại: chặn.
   # =========================================================
-  echo "[ACL] Boundary FW: allow Internet -> DMZ (only web/dns) via static NAT public IPs"
+  echo "[ACL] Firewall biên: Internet -> DMZ chỉ cho web/dns (static NAT)"
 
-  # Allow inbound to DMZ web VIPs
+  # Cho phép inbound tới Web DMZ
   NS core iptables -A FORWARD -i core-out -o core-d1 -p tcp -d 172.16.200.11/32 -m multiport --dports 80,443 -j ACCEPT \
     -m comment --comment "FW: Internet -> dmz_web1 TCP 80/443 permit"
   NS core iptables -A FORWARD -i core-out -o core-d1 -p tcp -d 172.16.200.12/32 -m multiport --dports 80,443 -j ACCEPT \
     -m comment --comment "FW: Internet -> dmz_web2 TCP 80/443 permit"
 
-  # Allow inbound to DMZ DNS
+  # Cho phép inbound tới DNS DMZ
   NS core iptables -A FORWARD -i core-out -o core-d1 -p udp -d 172.16.200.53/32 --dport 53 -j ACCEPT \
     -m comment --comment "FW: Internet -> dmz_dns UDP 53 permit"
   NS core iptables -A FORWARD -i core-out -o core-d1 -p tcp -d 172.16.200.53/32 --dport 53 -j ACCEPT \
     -m comment --comment "FW: Internet -> dmz_dns TCP 53 permit"
 
-  # Deny other inbound to DMZ (explicit)
+  # Chặn inbound khác vào DMZ
   NS core iptables -A FORWARD -i core-out -o core-d1 -d 172.16.200.0/24 -j DROP \
     -m comment --comment "FW: Internet -> DMZ deny all other"
 
   # =========================================================
-  # Permit inside -> internet (so users can reach outside through PAT)
+  # Cho phép inside -> internet (để người dùng đi ra ngoài qua PAT)
   # =========================================================
   NS core iptables -A FORWARD -i core-d1 -o core-out -s 10.10.0.0/16 -j ACCEPT \
     -m comment --comment "FW: Inside via dist1 -> Internet permit"
   NS core iptables -A FORWARD -i core-d2 -o core-out -s 10.10.0.0/16 -j ACCEPT \
     -m comment --comment "FW: Inside via dist2 -> Internet permit"
 
-  # (Optional) allow DMZ -> internet (kept open for lab convenience)
+  # (Tùy chọn) cho phép DMZ -> internet (để lab thuận tiện)
   NS core iptables -A FORWARD -i core-d1 -o core-out -s 172.16.200.0/24 -j ACCEPT \
     -m comment --comment "FW: DMZ -> Internet permit"
 
@@ -116,7 +116,7 @@ apply_acl() {
 }
 
 # -------------------------------
-# Drop/remove all ACLs
+# Gỡ/flush toàn bộ ACL
 # -------------------------------
 drop_acl() {
   echo "[ACL] Dropping (flushing) all ACL rules on core/dist1/dist2..."
