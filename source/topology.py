@@ -368,6 +368,12 @@ def configure(net: Mininet) -> None:
     _config_host_ip(net["dmz_web2"], "172.16.200.12/24", DMZ_SUBNET.gw)
     _config_host_ip(net["dmz_dns"], "172.16.200.53/24", DMZ_SUBNET.gw)
 
+    # Cực kỳ quan trọng: sau khi tự gán IP bằng tay, cần tạo lại ARP tĩnh (nếu dùng staticArp).
+    # Nếu để autoStaticArp=True ngay từ đầu trong khi host ip=None, Mininet có thể tạo ARP sai/thiếu,
+    # dẫn tới ping trong cùng VLAN cũng "Destination Host Unreachable".
+    info("*** Cập nhật bảng ARP tĩnh theo IP mới...\n")
+    net.staticArp()
+
     # Định tuyến: ưu tiên OSPF nếu có, nếu không thì static route
     info("*** Cấu hình định tuyến (OSPF nếu có, nếu không thì static route)...\n")
     mode = _try_enable_ospf_or_static(net)
@@ -396,7 +402,9 @@ def mn_cleanup() -> None:
 
 def run() -> None:
     topo = CampusTopo()
-    net = Mininet(topo=topo, controller=None, autoSetMacs=True, autoStaticArp=True)
+    # KHÔNG bật autoStaticArp ngay từ đầu vì ta gán IP thủ công sau khi net.start().
+    # Ta sẽ gọi net.staticArp() sau khi cấu hình IP xong.
+    net = Mininet(topo=topo, controller=None, autoSetMacs=True, autoStaticArp=False)
     net.start()
     configure(net)
     CLI(net)
