@@ -38,7 +38,7 @@ from dataclasses import dataclass
 from mininet.cli import CLI
 from mininet.log import setLogLevel, info
 from mininet.net import Mininet
-from mininet.node import Node, OVSSwitch
+from mininet.node import LinuxBridge, Node
 from mininet.topo import Topo
 
 
@@ -116,22 +116,20 @@ class CampusTopo(Topo):
         # Link Core <-> Internet (Outside)
         self.addLink(core, internet, intfName1="core-out", intfName2="inet0")
 
-        def add_ovs_switch(name: str, dpid_int: int) -> str:
-            """
-            Một số môi trường cần gán DPID tường minh, nếu không OVSSwitch có thể lỗi:
-              'Unable to derive default datapath ID'
-            """
-            return self.addSwitch(name, cls=OVSSwitch, stp=True, dpid=f"{dpid_int:016x}")
+        # Switch L2: dùng LinuxBridge để tránh phụ thuộc Controller của OVS.
+        # (OVS nếu failMode=secure + không có controller có thể không forward -> ping không thông)
+        def add_l2_switch(name: str) -> str:
+            return self.addSwitch(name, cls=LinuxBridge)
 
-        # Switch Access (mỗi phòng ban/VLAN một switch) + DPID tường minh
+        # Switch Access (mỗi phòng ban/VLAN một switch)
         access_switches = {
-            "admin": add_ovs_switch("acc_admin", 101),
-            "sales": add_ovs_switch("acc_sales", 102),
-            "eng": add_ovs_switch("acc_eng", 103),
-            "qa": add_ovs_switch("acc_qa", 104),
-            "finance": add_ovs_switch("acc_fin", 105),
-            "hr": add_ovs_switch("acc_hr", 106),
-            "it": add_ovs_switch("acc_it", 107),
+            "admin": add_l2_switch("acc_admin"),
+            "sales": add_l2_switch("acc_sales"),
+            "eng": add_l2_switch("acc_eng"),
+            "qa": add_l2_switch("acc_qa"),
+            "finance": add_l2_switch("acc_fin"),
+            "hr": add_l2_switch("acc_hr"),
+            "it": add_l2_switch("acc_it"),
         }
 
         # Chia VLAN về 2 Distribution để cân bằng mô phỏng (load share)
@@ -174,8 +172,8 @@ class CampusTopo(Topo):
                 h = self.addHost(hname, ip=None)
                 self.addLink(h, sw)
 
-        # Vùng DMZ: 1 switch + các server DMZ (DPID tường minh)
-        dmz_sw = add_ovs_switch("dmz_sw", 201)
+        # Vùng DMZ: 1 switch + các server DMZ
+        dmz_sw = add_l2_switch("dmz_sw")
         # Cũng không đặt tên interface dài phía switch; để Mininet tự sinh dmz_sw-ethX
         self.addLink("dist1", dmz_sw, intfName1="dist1-dmz")
 
