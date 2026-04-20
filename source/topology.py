@@ -103,15 +103,22 @@ class CampusTopo(Topo):
         # Core <-> Internet link (outside)
         self.addLink(core, internet, intfName1="core-out", intfName2="inet0")
 
-        # Access switches (one per department/VLAN)
+        def add_ovs_switch(name: str, dpid_int: int) -> str:
+            """
+            Explicit DPID is required on some systems; otherwise OVSSwitch may fail with:
+              'Unable to derive default datapath ID'
+            """
+            return self.addSwitch(name, cls=OVSSwitch, stp=True, dpid=f"{dpid_int:016x}")
+
+        # Access switches (one per department/VLAN) with explicit DPIDs
         access_switches = {
-            "admin": self.addSwitch("acc_admin", cls=OVSSwitch, stp=True),
-            "sales": self.addSwitch("acc_sales", cls=OVSSwitch, stp=True),
-            "eng": self.addSwitch("acc_eng", cls=OVSSwitch, stp=True),
-            "qa": self.addSwitch("acc_qa", cls=OVSSwitch, stp=True),
-            "finance": self.addSwitch("acc_fin", cls=OVSSwitch, stp=True),
-            "hr": self.addSwitch("acc_hr", cls=OVSSwitch, stp=True),
-            "it": self.addSwitch("acc_it", cls=OVSSwitch, stp=True),
+            "admin": add_ovs_switch("acc_admin", 101),
+            "sales": add_ovs_switch("acc_sales", 102),
+            "eng": add_ovs_switch("acc_eng", 103),
+            "qa": add_ovs_switch("acc_qa", 104),
+            "finance": add_ovs_switch("acc_fin", 105),
+            "hr": add_ovs_switch("acc_hr", 106),
+            "it": add_ovs_switch("acc_it", 107),
         }
 
         # Map VLANs to one of the two distributions (load share)
@@ -153,8 +160,8 @@ class CampusTopo(Topo):
                 h = self.addHost(hname, ip=None)
                 self.addLink(h, sw)
 
-        # DMZ segment: switch + servers
-        dmz_sw = self.addSwitch("dmz_sw", cls=OVSSwitch, stp=True)
+        # DMZ segment: switch + servers (explicit DPID)
+        dmz_sw = add_ovs_switch("dmz_sw", 201)
         self.addLink("dist1", dmz_sw, intfName1="dist1-dmz", intfName2="dmz-uplink")
 
         dmz_web1 = self.addHost("dmz_web1", ip=None)
