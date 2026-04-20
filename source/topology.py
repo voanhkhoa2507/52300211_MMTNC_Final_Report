@@ -145,13 +145,16 @@ class CampusTopo(Topo):
             "it": dist2,
         }
 
-        # Uplink each access switch to its distribution router
+        # Uplink each access switch to its distribution router.
+        # IMPORTANT: Do NOT force long interface names on the switch side.
+        # Linux IFNAMSIZ is 15 chars; names like "acc_admin-uplink" will fail.
+        # Let Mininet auto-generate "acc_admin-ethX" instead.
         for dept, sw in access_switches.items():
             if dept not in dist_map:
                 continue
             dist = dist_map[dept]
             dist_name = "dist1" if dist is dist1 else "dist2"
-            self.addLink(dist_name, sw, intfName1=f"{dist_name}-{dept}", intfName2=f"{sw}-uplink")
+            self.addLink(dist_name, sw, intfName1=f"{dist_name}-{dept}")
 
         # Hosts per department (PC, IP phone, printer) - small but representative
         # You can scale counts later without changing routing/NAT/ACL design.
@@ -174,7 +177,8 @@ class CampusTopo(Topo):
 
         # DMZ segment: switch + servers (explicit DPID)
         dmz_sw = add_ovs_switch("dmz_sw", 201)
-        self.addLink("dist1", dmz_sw, intfName1="dist1-dmz", intfName2="dmz-uplink")
+        # Same interface-name constraint on the switch side; let Mininet choose dmz_sw-ethX
+        self.addLink("dist1", dmz_sw, intfName1="dist1-dmz")
 
         dmz_web1 = self.addHost("dmz_web1", ip=None)
         dmz_web2 = self.addHost("dmz_web2", ip=None)
