@@ -48,8 +48,10 @@ class LinuxRouter(Node):
     def config(self, **params):
         super().config(**params)
         self.cmd("sysctl -w net.ipv4.ip_forward=1 >/dev/null")
+        # Tắt rp_filter để tránh chặn gói định tuyến/multicast trong môi trường lab (OSPF dùng multicast).
         self.cmd("sysctl -w net.ipv4.conf.all.rp_filter=0 >/dev/null")
         self.cmd("sysctl -w net.ipv4.conf.default.rp_filter=0 >/dev/null")
+        self.cmd("bash -lc 'for f in /proc/sys/net/ipv4/conf/*/rp_filter; do echo 0 > $f; done' >/dev/null 2>&1 || true")
 
     def terminate(self):
         self.cmd("sysctl -w net.ipv4.ip_forward=0 >/dev/null")
@@ -286,8 +288,13 @@ line vty
 !
 """
         # Gắn OSPF area 0 lên các interface cần quảng bá mạng (kể cả interface không có neighbor).
+        # Với các link tạo neighbor, ép kiểu point-to-point để tránh lệch trạng thái DR/BDR.
         for ifn in ospf_ifaces:
-            ospf_conf += f"interface {ifn}\n ip ospf area 0\n!\n"
+            ospf_conf += f"interface {ifn}\n ip ospf area 0\n"
+            if ifn in active_neighbor_ifaces:
+                ospf_conf += " ip ospf network point-to-point\n"
+                ospf_conf += " ip ospf priority 0\n"
+            ospf_conf += "!\n"
 
         ospf_conf += "router ospf\n"
         ospf_conf += f" ospf router-id {router_id}\n"
