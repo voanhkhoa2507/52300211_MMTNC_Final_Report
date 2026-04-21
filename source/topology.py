@@ -214,39 +214,88 @@ def _try_enable_ospf_or_static(net: Mininet) -> str:
     Thử bật OSPF (FRR/Quagga) nếu máy có sẵn; nếu không thì dùng static route.
     Trả về mode: 'ospf' hoặc 'static'.
     """
-    # Dò nhanh: có vtysh và ospfd/zebra hay không.
+    # Dò nhanh: có vtysh và zebra/ospfd của FRR hay không.
     has_vtysh = os.path.exists("/usr/bin/vtysh") or os.path.exists("/usr/local/bin/vtysh")
-    has_ospfd = os.path.exists("/usr/lib/frr/ospfd") or os.path.exists("/usr/lib/quagga/ospfd")
-    has_zebra = os.path.exists("/usr/lib/frr/zebra") or os.path.exists("/usr/lib/quagga/zebra")
+    zebra_bin = "/usr/lib/frr/zebra" if os.path.exists("/usr/lib/frr/zebra") else "/usr/lib/quagga/zebra"
+    ospfd_bin = "/usr/lib/frr/ospfd" if os.path.exists("/usr/lib/frr/ospfd") else "/usr/lib/quagga/ospfd"
+    has_zebra = os.path.exists(zebra_bin)
+    has_ospfd = os.path.exists(ospfd_bin)
 
-    if has_vtysh and has_ospfd and has_zebra:
-        info("*** Phát hiện FRR/Quagga. Thử cấu hình OSPF bằng vtysh (best-effort)...\n")
+    def start_frr_ospf_in_ns(node_name: str, router_id: str, networks: list[str], default_originate: bool) -> bool:
+        """
+        Khởi chạy zebra + ospfd trong namespace node_name và nạp cấu hình OSPF bằng file.
+        Trả về True nếu có vẻ chạy được.
+        """
+        node = net[node_name]
+        conf_dir = f"/tmp/frr_{node_name}"
+        node.cmd(f"rm -rf {conf_dir} && mkdir -p {conf_dir} /var/run/frr")
 
-        def vty(node, cmds: str) -> None:
-            node.cmd(f"bash -lc 'printf \"%s\" \"{cmds}\" | vtysh -b' >/dev/null 2>&1")
+        zebra_conf = f"""hostname {node_name}
+password zebra
+enable password zebra
+log stdout
+service integrated-vtysh-config
+"""
+        ospf_conf = f"""hostname {node_name}
+password zebra
+enable password zebra
+log stdout
+service integrated-vtysh-config
+!
+router ospf
+ ospf router-id {router_id}
+"""
+        for n in networks:
+            ospf_conf += f" network {n} area 0\n"
+        if default_originate:
+            ospf_conf += " default-information originate always\n"
+        ospf_conf += "!\n"
 
-        # Khởi chạy zebra/ospfd trong namespace (best-effort).
-        for r in ["core", "dist1", "dist2"]:
-            node = net[r]
-            node.cmd("mkdir -p /var/run/frr /tmp/frr 2>/dev/null")
-            node.cmd("touch /tmp/frr/zebra.conf /tmp/frr/ospfd.conf")
-            node.cmd("chown -R frr:frr /tmp/frr 2>/dev/null || true")
-            node.cmd("/usr/lib/frr/zebra -d -A 127.0.0.1 -f /tmp/frr/zebra.conf -i /tmp/frr/zebra.pid >/dev/null 2>&1 || true")
-            node.cmd("/usr/lib/frr/ospfd -d -A 127.0.0.1 -f /tmp/frr/ospfd.conf -i /tmp/frr/ospfd.pid >/dev/null 2>&1 || true")
+        # Ghi file config vào namespace
+        node.cmd(f"bash -lc 'cat > {conf_dir}/zebra.conf <<\"EOF\"\n{zebra_conf}\nEOF'")
+        node.cmd(f"bash -lc 'cat > {conf_dir}/ospfd.conf <<\"EOF\"\n{ospf_conf}\nEOF'")
 
-        # Router-IDs
-        vty(net["core"], "conf t\nrouter ospf\nospf router-id 1.1.1.1\nend\n")
-        vty(net["dist1"], "conf t\nrouter ospf\nospf router-id 2.2.2.2\nend\n")
-        vty(net["dist2"], "conf t\nrouter ospf\nospf router-id 3.3.3.3\nend\n")
+        # Dừng daemon cũ nếu có
+        node.cmd("pkill -9 zebra 2>/dev/null || true")
+        node.cmd("pkill -9 ospfd 2>/dev/null || true")
 
-        # Khai báo network (gọn: p2p + VLANs + DMZ + outside trên core)
-        vty(net["core"], "conf t\nrouter ospf\nnetwork 10.255.0.0/30 area 0\nnetwork 10.255.0.4/30 area 0\nnetwork 203.0.113.0/24 area 0\nend\n")
-        vty(net["dist1"], "conf t\nrouter ospf\nnetwork 10.255.0.0/30 area 0\nnetwork 10.10.10.0/24 area 0\nnetwork 10.10.20.0/24 area 0\nnetwork 10.10.50.0/24 area 0\nnetwork 10.10.60.0/24 area 0\nnetwork 172.16.200.0/24 area 0\nend\n")
-        vty(net["dist2"], "conf t\nrouter ospf\nnetwork 10.255.0.4/30 area 0\nnetwork 10.10.30.0/24 area 0\nnetwork 10.10.40.0/24 area 0\nnetwork 10.10.70.0/24 area 0\nend\n")
+        # Khởi chạy zebra/ospfd trong namespace (socket /var/run/frr)
+        node.cmd(f"{zebra_bin} -d -A 127.0.0.1 -f {conf_dir}/zebra.conf -i {conf_dir}/zebra.pid >/dev/null 2>&1 || true")
+        node.cmd(f"{ospfd_bin} -d -A 127.0.0.1 -f {conf_dir}/ospfd.conf -i {conf_dir}/ospfd.pid >/dev/null 2>&1 || true")
 
-        info("*** Đã cấu hình OSPF (best-effort). Đợi 5s cho hội tụ...\n")
-        time.sleep(5)
-        return "ospf"
+        # Kiểm tra PID file tồn tại
+        z_ok = node.cmd(f"test -s {conf_dir}/zebra.pid && echo OK || echo FAIL").strip() == "OK"
+        o_ok = node.cmd(f"test -s {conf_dir}/ospfd.pid && echo OK || echo FAIL").strip() == "OK"
+        return z_ok and o_ok
+
+    if has_vtysh and has_zebra and has_ospfd:
+        info("*** Phát hiện FRR/Quagga. Sẽ khởi chạy zebra/ospfd trong từng namespace để dùng OSPF thật.\n")
+
+        ok_core = start_frr_ospf_in_ns(
+            "core",
+            "1.1.1.1",
+            networks=["10.255.0.0/30", "10.255.0.4/30", "203.0.113.0/24"],
+            default_originate=True,
+        )
+        ok_d1 = start_frr_ospf_in_ns(
+            "dist1",
+            "2.2.2.2",
+            networks=["10.255.0.0/30", "10.10.10.0/24", "10.10.20.0/24", "10.10.50.0/24", "10.10.60.0/24", "172.16.200.0/24"],
+            default_originate=False,
+        )
+        ok_d2 = start_frr_ospf_in_ns(
+            "dist2",
+            "3.3.3.3",
+            networks=["10.255.0.4/30", "10.10.30.0/24", "10.10.40.0/24", "10.10.70.0/24"],
+            default_originate=False,
+        )
+
+        if ok_core and ok_d1 and ok_d2:
+            info("*** Đã bật OSPF trong namespace. Đợi 8s cho hội tụ neighbor...\n")
+            time.sleep(8)
+            return "ospf"
+
+        info("*** FRR có sẵn nhưng khởi chạy OSPF trong namespace thất bại. Chuyển sang static route.\n")
 
     info("*** Không có FRR/Quagga. Chuyển sang static route.\n")
 
