@@ -229,6 +229,9 @@ def _try_enable_ospf_or_static(net: Mininet) -> str:
     has_zebra = os.path.exists(zebra_bin)
     has_ospfd = os.path.exists(ospfd_bin)
 
+    def _have_frr_user(node) -> bool:
+        return node.cmd("id -u frr >/dev/null 2>&1 && echo YES || echo NO").strip() == "YES"
+
     def start_frr_ospf_in_ns(node_name: str, router_id: str, networks: list[str], default_originate: bool) -> bool:
         """
         Khởi chạy zebra + ospfd trong namespace node_name và nạp cấu hình OSPF bằng file.
@@ -237,6 +240,10 @@ def _try_enable_ospf_or_static(net: Mininet) -> str:
         node = net[node_name]
         conf_dir = f"/tmp/frr_{node_name}"
         node.cmd(f"rm -rf {conf_dir} && mkdir -p {conf_dir} /var/run/frr")
+        # Đảm bảo quyền cho socket/runtime của FRR (vty socket nằm ở /var/run/frr)
+        if _have_frr_user(node):
+            node.cmd(f"chown -R frr:frr {conf_dir} /var/run/frr 2>/dev/null || true")
+            node.cmd("chmod 775 /var/run/frr 2>/dev/null || true")
 
         zebra_conf = f"""hostname {node_name}
 password zebra
@@ -263,18 +270,19 @@ router ospf
         node.cmd(f"bash -lc 'cat > {conf_dir}/zebra.conf <<\"EOF\"\n{zebra_conf}\nEOF'")
         node.cmd(f"bash -lc 'cat > {conf_dir}/ospfd.conf <<\"EOF\"\n{ospf_conf}\nEOF'")
 
-        # Dừng daemon cũ nếu có
+        # Dừng daemon cũ nếu có (trong namespace)
         node.cmd("pkill -9 zebra 2>/dev/null || true")
         node.cmd("pkill -9 ospfd 2>/dev/null || true")
 
         # Khởi chạy zebra/ospfd trong namespace (socket /var/run/frr)
         # Ghi log ra file để dễ debug nếu daemon tự thoát.
+        run_as = "-u frr -g frr" if _have_frr_user(node) else ""
         node.cmd(
-            f"bash -lc '{zebra_bin} -d -A 127.0.0.1 -f {conf_dir}/zebra.conf -i {conf_dir}/zebra.pid "
+            f"bash -lc '{zebra_bin} {run_as} -d -A 127.0.0.1 -f {conf_dir}/zebra.conf -i {conf_dir}/zebra.pid "
             f"> {conf_dir}/zebra.log 2>&1 || true'"
         )
         node.cmd(
-            f"bash -lc '{ospfd_bin} -d -A 127.0.0.1 -f {conf_dir}/ospfd.conf -i {conf_dir}/ospfd.pid "
+            f"bash -lc '{ospfd_bin} {run_as} -d -A 127.0.0.1 -f {conf_dir}/ospfd.conf -i {conf_dir}/ospfd.pid "
             f"> {conf_dir}/ospfd.log 2>&1 || true'"
         )
 
@@ -316,6 +324,12 @@ router ospf
             return "ospf"
 
         info("*** FRR có sẵn nhưng khởi chạy OSPF trong namespace thất bại. Chuyển sang static route.\n")
+        info("    Gợi ý debug nhanh:\n")
+        info("      sudo ip netns exec core  tail -n 50 /tmp/frr_core/ospfd.log\n")
+        info("      sudo ip netns exec dist1 tail -n 50 /tmp/frr_dist1/ospfd.log\n")
+        info("      sudo ip netns exec dist2 tail -n 50 /tmp/frr_dist2/ospfd.log\n")
+        # Không rơi xuống nhánh 'không có FRR'; ta đã xác định FRR có nhưng start fail.
+        return "static"
 
     info("*** Không có FRR/Quagga. Chuyển sang static route.\n")
 
