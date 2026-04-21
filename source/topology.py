@@ -400,6 +400,11 @@ def _setup_nat(core) -> None:
     core.cmd("iptables -P FORWARD DROP")
     core.cmd("iptables -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT")
 
+    # Cho phép core chuyển tiếp nội bộ giữa 2 nhánh Distribution (liên VLAN đi qua core).
+    # Nếu thiếu 2 rule này, ping liên VLAN (dist1 <-> dist2) sẽ bị drop tại core.
+    core.cmd("iptables -A FORWARD -i core-d1 -o core-d2 -j ACCEPT")
+    core.cmd("iptables -A FORWARD -i core-d2 -o core-d1 -j ACCEPT")
+
     # PAT (Overload) cho người dùng inside
     core.cmd("iptables -t nat -A POSTROUTING -s 10.10.0.0/16 -o core-out -j MASQUERADE")
 
