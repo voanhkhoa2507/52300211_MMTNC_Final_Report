@@ -82,19 +82,28 @@ def iptables_nat_replace_dnat(ns: str, vip: str, ports: str, to_ip: str, comment
     Đảm bảo đúng 1 rule DNAT cho VIP:ports -> to_ip (trong PREROUTING).
     Xoá rule DNAT cũ (nếu có) rồi add rule mới.
     """
-    # Liệt kê rule hiện tại có comment
+    # Liệt kê rule PREROUTING hiện tại.
+    # LƯU Ý: topology.py cũng tạo DNAT tĩnh cho VIP. Nếu ta chỉ add rule mới (append) thì
+    # rule cũ ở phía trên sẽ match trước => VIP không đổi.
+    # Vì vậy ta xoá TẤT CẢ DNAT match VIP+ports rồi insert rule mới lên đầu.
     cur = netns_exec(ns, "iptables -t nat -S PREROUTING 2>/dev/null || true")
-    lines = [l for l in cur.splitlines() if comment in l and "-j DNAT" in l]
+
+    def is_same_service(rule_line: str) -> bool:
+        return (f"-d {vip}" in rule_line) and ("-j DNAT" in rule_line) and ("--dports" in rule_line) and any(
+            p.strip() in rule_line for p in ports.split(",")
+        )
+
+    lines = [l for l in cur.splitlines() if is_same_service(l)]
     for l in lines:
         # Convert -A to -D
         del_line = l.replace("-A", "-D", 1)
         netns_exec(ns, f"iptables -t nat {del_line} 2>/dev/null || true")
 
-    # Add new DNAT
+    # Add new DNAT (insert lên đầu để chắc chắn match trước)
     netns_exec(
         ns,
         (
-            "iptables -t nat -A PREROUTING "
+            "iptables -t nat -I PREROUTING 1 "
             f"-p tcp -d {vip} -m multiport --dports {ports} "
             f"-j DNAT --to-destination {to_ip} "
             f"-m comment --comment \"{comment}\""
