@@ -95,6 +95,14 @@ CORE_DIST2_DIST_IP = "10.255.0.6/30"
 CORE_OUTSIDE_IP = "203.0.113.2/24"
 INTERNET_IP = "203.0.113.1/24"
 
+# Public VIPs (Outside Global) cho Static NAT inbound vào DMZ.
+# Cần gán các IP này lên interface core-out để core trả lời ARP (nếu không sẽ "No route to host").
+PUBLIC_VIPS = [
+    "203.0.113.11/32",  # dmz_web1
+    "203.0.113.12/32",  # dmz_web2
+    "203.0.113.53/32",  # dmz_dns
+]
+
 
 class CampusTopo(Topo):
     def build(self):
@@ -260,13 +268,25 @@ router ospf
         node.cmd("pkill -9 ospfd 2>/dev/null || true")
 
         # Khởi chạy zebra/ospfd trong namespace (socket /var/run/frr)
-        node.cmd(f"{zebra_bin} -d -A 127.0.0.1 -f {conf_dir}/zebra.conf -i {conf_dir}/zebra.pid >/dev/null 2>&1 || true")
-        node.cmd(f"{ospfd_bin} -d -A 127.0.0.1 -f {conf_dir}/ospfd.conf -i {conf_dir}/ospfd.pid >/dev/null 2>&1 || true")
+        # Ghi log ra file để dễ debug nếu daemon tự thoát.
+        node.cmd(
+            f"bash -lc '{zebra_bin} -d -A 127.0.0.1 -f {conf_dir}/zebra.conf -i {conf_dir}/zebra.pid "
+            f"> {conf_dir}/zebra.log 2>&1 || true'"
+        )
+        node.cmd(
+            f"bash -lc '{ospfd_bin} -d -A 127.0.0.1 -f {conf_dir}/ospfd.conf -i {conf_dir}/ospfd.pid "
+            f"> {conf_dir}/ospfd.log 2>&1 || true'"
+        )
 
-        # Kiểm tra PID file tồn tại
-        z_ok = node.cmd(f"test -s {conf_dir}/zebra.pid && echo OK || echo FAIL").strip() == "OK"
-        o_ok = node.cmd(f"test -s {conf_dir}/ospfd.pid && echo OK || echo FAIL").strip() == "OK"
-        return z_ok and o_ok
+        # Kiểm tra PID tồn tại + process còn sống
+        z_pid = node.cmd(f"cat {conf_dir}/zebra.pid 2>/dev/null || true").strip()
+        o_pid = node.cmd(f"cat {conf_dir}/ospfd.pid 2>/dev/null || true").strip()
+        if not z_pid or not o_pid:
+            return False
+
+        z_alive = node.cmd(f"kill -0 {z_pid} 2>/dev/null && echo OK || echo FAIL").strip() == "OK"
+        o_alive = node.cmd(f"kill -0 {o_pid} 2>/dev/null && echo OK || echo FAIL").strip() == "OK"
+        return z_alive and o_alive
 
     if has_vtysh and has_zebra and has_ospfd:
         info("*** Phát hiện FRR/Quagga. Sẽ khởi chạy zebra/ospfd trong từng namespace để dùng OSPF thật.\n")
@@ -370,6 +390,9 @@ def configure(net: Mininet) -> None:
 
     # Cổng outside của core và host internet
     core.cmd(f"ip addr add {CORE_OUTSIDE_IP} dev core-out")
+    # Gán thêm VIP public để core trả lời ARP cho các địa chỉ Static NAT inbound
+    for vip in PUBLIC_VIPS:
+        core.cmd(f"ip addr add {vip} dev core-out")
     internet.cmd(f"ip addr add {INTERNET_IP} dev inet0")
     internet.cmd("ip route replace default via 203.0.113.2")
 
