@@ -252,6 +252,13 @@ def _try_enable_ospf_or_static(net: Mininet) -> str:
         conf_dir = f"/tmp/frr_{node_name}"
         vty_dir = f"{conf_dir}/vty"
         zsock = f"{conf_dir}/zserv.api"
+
+        # Dừng đúng tiến trình cũ theo pidfile (KHÔNG dùng pkill vì netns không tách PID)
+        for pidfile in [f"{conf_dir}/zebra.pid", f"{conf_dir}/ospfd.pid"]:
+            pid = node.cmd(f"cat {pidfile} 2>/dev/null || true").strip()
+            if pid:
+                node.cmd(f"kill -9 {pid} 2>/dev/null || true")
+
         node.cmd(f"rm -rf {conf_dir} && mkdir -p {conf_dir} {vty_dir}")
         if _have_frr_user(node):
             node.cmd(f"chown -R frr:frr {conf_dir} 2>/dev/null || true")
@@ -303,10 +310,6 @@ line vty
         # Ghi file config vào namespace
         node.cmd(f"bash -lc 'cat > {conf_dir}/zebra.conf <<\"EOF\"\n{zebra_conf}\nEOF'")
         node.cmd(f"bash -lc 'cat > {conf_dir}/ospfd.conf <<\"EOF\"\n{ospf_conf}\nEOF'")
-
-        # Dừng daemon cũ nếu có (trong namespace)
-        node.cmd("pkill -9 zebra 2>/dev/null || true")
-        node.cmd("pkill -9 ospfd 2>/dev/null || true")
 
         # Khởi chạy zebra/ospfd trong namespace
         # Ghi log ra file để dễ debug nếu daemon tự thoát.
