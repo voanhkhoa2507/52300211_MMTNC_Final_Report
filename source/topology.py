@@ -284,6 +284,15 @@ line vty
 
         ospf_conf += "router ospf\n"
         ospf_conf += f" ospf router-id {router_id}\n"
+        # Thêm network statement cho các link P2P để tránh một số trường hợp ospfd không kích hoạt interface đúng.
+        # (Kết hợp cả 2 kiểu: interface-based + network-based để tăng tính tương thích.)
+        if node_name == "core":
+            ospf_conf += " network 10.255.0.0/30 area 0\n"
+            ospf_conf += " network 10.255.0.4/30 area 0\n"
+        elif node_name == "dist1":
+            ospf_conf += " network 10.255.0.0/30 area 0\n"
+        elif node_name == "dist2":
+            ospf_conf += " network 10.255.0.4/30 area 0\n"
         ospf_conf += " passive-interface default\n"
         for ifn in active_neighbor_ifaces:
             ospf_conf += f" no passive-interface {ifn}\n"
