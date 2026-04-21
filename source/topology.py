@@ -38,7 +38,7 @@ from dataclasses import dataclass
 from mininet.cli import CLI
 from mininet.log import setLogLevel, info
 from mininet.net import Mininet
-from mininet.node import LinuxBridge, Node
+from mininet.node import Node, OVSSwitch
 from mininet.topo import Topo
 
 
@@ -75,9 +75,6 @@ VLAN_SUBNETS = {
 
 DMZ_SUBNET = Subnet("172.16.200.0/24", "172.16.200.1")
 
-# Linux giới hạn tên interface 15 ký tự (IFNAMSIZ=15). Mininet thường tạo tên:
-#   <host>-eth0
-# nên cần giữ hostname ngắn để tránh lỗi: "name not a valid ifname".
 DEPT_ABBR = {
     "admin": "ad",
     "sales": "sa",
@@ -116,20 +113,27 @@ class CampusTopo(Topo):
         # Link Core <-> Internet (Outside)
         self.addLink(core, internet, intfName1="core-out", intfName2="inet0")
 
-        # Switch L2: dùng LinuxBridge để tránh phụ thuộc Controller của OVS.
-        # (OVS nếu failMode=secure + không có controller có thể không forward -> ping không thông)
-        def add_l2_switch(name: str) -> str:
-            return self.addSwitch(name, cls=LinuxBridge)
+        # Switch L2: dùng OVSSwitch ở chế độ standalone để KHÔNG cần controller vẫn forward L2.
+        # Tránh tình trạng OVS failMode=secure làm không forward khi controller=None.
+        def add_l2_switch(name: str, dpid_int: int) -> str:
+            return self.addSwitch(
+                name,
+                cls=OVSSwitch,
+                # standalone = act like a normal L2 switch with MAC learning
+                failMode="standalone",
+                # Một số môi trường cần dpid tường minh để tránh lỗi derive dpid
+                dpid=f"{dpid_int:016x}",
+            )
 
         # Switch Access (mỗi phòng ban/VLAN một switch)
         access_switches = {
-            "admin": add_l2_switch("acc_admin"),
-            "sales": add_l2_switch("acc_sales"),
-            "eng": add_l2_switch("acc_eng"),
-            "qa": add_l2_switch("acc_qa"),
-            "finance": add_l2_switch("acc_fin"),
-            "hr": add_l2_switch("acc_hr"),
-            "it": add_l2_switch("acc_it"),
+            "admin": add_l2_switch("acc_admin", 101),
+            "sales": add_l2_switch("acc_sales", 102),
+            "eng": add_l2_switch("acc_eng", 103),
+            "qa": add_l2_switch("acc_qa", 104),
+            "finance": add_l2_switch("acc_fin", 105),
+            "hr": add_l2_switch("acc_hr", 106),
+            "it": add_l2_switch("acc_it", 107),
         }
 
         # Chia VLAN về 2 Distribution để cân bằng mô phỏng (load share)
@@ -173,7 +177,7 @@ class CampusTopo(Topo):
                 self.addLink(h, sw)
 
         # Vùng DMZ: 1 switch + các server DMZ
-        dmz_sw = add_l2_switch("dmz_sw")
+        dmz_sw = add_l2_switch("dmz_sw", 201)
         # Cũng không đặt tên interface dài phía switch; để Mininet tự sinh dmz_sw-ethX
         self.addLink("dist1", dmz_sw, intfName1="dist1-dmz")
 
