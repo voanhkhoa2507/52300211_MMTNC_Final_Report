@@ -296,10 +296,19 @@ line vty
         if node_name == "core":
             ospf_conf += " network 10.255.0.0/30 area 0\n"
             ospf_conf += " network 10.255.0.4/30 area 0\n"
+            # Core chỉ cần quảng bá các link /30; các VLAN nằm phía dist.
         elif node_name == "dist1":
             ospf_conf += " network 10.255.0.0/30 area 0\n"
+            ospf_conf += " network 10.10.10.0/24 area 0\n"
+            ospf_conf += " network 10.10.20.0/24 area 0\n"
+            ospf_conf += " network 10.10.50.0/24 area 0\n"
+            ospf_conf += " network 10.10.60.0/24 area 0\n"
+            ospf_conf += " network 172.16.200.0/24 area 0\n"
         elif node_name == "dist2":
             ospf_conf += " network 10.255.0.4/30 area 0\n"
+            ospf_conf += " network 10.10.30.0/24 area 0\n"
+            ospf_conf += " network 10.10.40.0/24 area 0\n"
+            ospf_conf += " network 10.10.70.0/24 area 0\n"
         ospf_conf += " passive-interface default\n"
         for ifn in active_neighbor_ifaces:
             ospf_conf += f" no passive-interface {ifn}\n"
