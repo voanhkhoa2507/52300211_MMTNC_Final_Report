@@ -256,20 +256,26 @@ def _try_enable_ospf_or_static(net: Mininet) -> str:
         if _have_frr_user(node):
             node.cmd(f"chown -R frr:frr {conf_dir} 2>/dev/null || true")
 
+        # Tắt login cho VTY để dễ test bằng nc/vtysh trong môi trường lab (không nhập password).
         zebra_conf = f"""hostname {node_name}
-password zebra
-enable password zebra
 log stdout
 service integrated-vtysh-config
+service advanced-vty
 vty socket {vty_dir}
+!
+line vty
+ no login
+!
 """
         # OSPF theo hướng interface-based (ổn định hơn network statement trong nhiều môi trường lab).
         ospf_conf = f"""hostname {node_name}
-password zebra
-enable password zebra
 log stdout
 service integrated-vtysh-config
+service advanced-vty
 vty socket {vty_dir}
+!
+line vty
+ no login
 !
 """
         # Gắn OSPF area 0 lên các interface cần quảng bá mạng (kể cả interface không có neighbor).
