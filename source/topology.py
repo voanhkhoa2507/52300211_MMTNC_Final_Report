@@ -244,18 +244,24 @@ def _try_enable_ospf_or_static(net: Mininet) -> str:
         Trả về True nếu có vẻ chạy được.
         """
         node = net[node_name]
+        # QUAN TRỌNG:
+        # - Network namespace KHÔNG cô lập filesystem. Nếu nhiều router cùng dùng /var/run/frr,
+        #   các socket VTY của zebra/ospfd sẽ đụng nhau -> OSPF neighbor không lên ổn định.
+        # - Giải pháp: mỗi router dùng 1 thư mục runtime riêng trong /tmp và dùng VTY qua TCP loopback
+        #   (127.0.0.1:2601 zebra, 127.0.0.1:2604 ospfd) để kiểm tra/truy vấn.
         conf_dir = f"/tmp/frr_{node_name}"
-        node.cmd(f"rm -rf {conf_dir} && mkdir -p {conf_dir} /var/run/frr")
-        # Đảm bảo quyền cho socket/runtime của FRR (vty socket nằm ở /var/run/frr)
+        vty_dir = f"{conf_dir}/vty"
+        zsock = f"{conf_dir}/zserv.api"
+        node.cmd(f"rm -rf {conf_dir} && mkdir -p {conf_dir} {vty_dir}")
         if _have_frr_user(node):
-            node.cmd(f"chown -R frr:frr {conf_dir} /var/run/frr 2>/dev/null || true")
-            node.cmd("chmod 775 /var/run/frr 2>/dev/null || true")
+            node.cmd(f"chown -R frr:frr {conf_dir} 2>/dev/null || true")
 
         zebra_conf = f"""hostname {node_name}
 password zebra
 enable password zebra
 log stdout
 service integrated-vtysh-config
+vty socket {vty_dir}
 """
         # OSPF theo hướng interface-based (ổn định hơn network statement trong nhiều môi trường lab).
         ospf_conf = f"""hostname {node_name}
@@ -263,6 +269,7 @@ password zebra
 enable password zebra
 log stdout
 service integrated-vtysh-config
+vty socket {vty_dir}
 !
 """
         # Gắn OSPF area 0 lên các interface cần quảng bá mạng (kể cả interface không có neighbor).
@@ -286,15 +293,15 @@ service integrated-vtysh-config
         node.cmd("pkill -9 zebra 2>/dev/null || true")
         node.cmd("pkill -9 ospfd 2>/dev/null || true")
 
-        # Khởi chạy zebra/ospfd trong namespace (socket /var/run/frr)
+        # Khởi chạy zebra/ospfd trong namespace
         # Ghi log ra file để dễ debug nếu daemon tự thoát.
         run_as = "-u frr -g frr" if _have_frr_user(node) else ""
         node.cmd(
-            f"bash -lc '{zebra_bin} {run_as} -d -A 127.0.0.1 -f {conf_dir}/zebra.conf -i {conf_dir}/zebra.pid "
+            f"bash -lc '{zebra_bin} {run_as} -d -A 127.0.0.1 -z {zsock} -f {conf_dir}/zebra.conf -i {conf_dir}/zebra.pid "
             f"> {conf_dir}/zebra.log 2>&1 || true'"
         )
         node.cmd(
-            f"bash -lc '{ospfd_bin} {run_as} -d -A 127.0.0.1 -f {conf_dir}/ospfd.conf -i {conf_dir}/ospfd.pid "
+            f"bash -lc '{ospfd_bin} {run_as} -d -A 127.0.0.1 -z {zsock} -f {conf_dir}/ospfd.conf -i {conf_dir}/ospfd.pid "
             f"> {conf_dir}/ospfd.log 2>&1 || true'"
         )
 
@@ -341,6 +348,7 @@ service integrated-vtysh-config
         info("*** FRR có sẵn nhưng khởi chạy OSPF trong namespace thất bại. Chuyển sang static route.\n")
         info("    Gợi ý debug nhanh:\n")
         info("      sudo ip netns exec core  tail -n 50 /tmp/frr_core/ospfd.log\n")
+        info("      sudo ip netns exec core  tail -n 50 /tmp/frr_core/zebra.log\n")
         info("      sudo ip netns exec dist1 tail -n 50 /tmp/frr_dist1/ospfd.log\n")
         info("      sudo ip netns exec dist2 tail -n 50 /tmp/frr_dist2/ospfd.log\n")
         # Không rơi xuống nhánh 'không có FRR'; ta đã xác định FRR có nhưng start fail.
