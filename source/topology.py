@@ -304,11 +304,14 @@ line vty
             ospf_conf += " network 10.10.50.0/24 area 0\n"
             ospf_conf += " network 10.10.60.0/24 area 0\n"
             ospf_conf += " network 172.16.200.0/24 area 0\n"
+            # Đảm bảo các mạng connected được quảng bá/đẩy vào LSDB trong mọi môi trường
+            ospf_conf += " redistribute connected\n"
         elif node_name == "dist2":
             ospf_conf += " network 10.255.0.4/30 area 0\n"
             ospf_conf += " network 10.10.30.0/24 area 0\n"
             ospf_conf += " network 10.10.40.0/24 area 0\n"
             ospf_conf += " network 10.10.70.0/24 area 0\n"
+            ospf_conf += " redistribute connected\n"
         ospf_conf += " passive-interface default\n"
         for ifn in active_neighbor_ifaces:
             ospf_conf += f" no passive-interface {ifn}\n"
