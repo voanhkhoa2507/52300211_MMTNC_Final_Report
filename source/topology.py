@@ -232,7 +232,13 @@ def _try_enable_ospf_or_static(net: Mininet) -> str:
     def _have_frr_user(node) -> bool:
         return node.cmd("id -u frr >/dev/null 2>&1 && echo YES || echo NO").strip() == "YES"
 
-    def start_frr_ospf_in_ns(node_name: str, router_id: str, networks: list[str], default_originate: bool) -> bool:
+    def start_frr_ospf_in_ns(
+        node_name: str,
+        router_id: str,
+        ospf_ifaces: list[str],
+        active_neighbor_ifaces: list[str],
+        default_originate: bool,
+    ) -> bool:
         """
         Khởi chạy zebra + ospfd trong namespace node_name và nạp cấu hình OSPF bằng file.
         Trả về True nếu có vẻ chạy được.
@@ -251,17 +257,23 @@ enable password zebra
 log stdout
 service integrated-vtysh-config
 """
+        # OSPF theo hướng interface-based (ổn định hơn network statement trong nhiều môi trường lab).
         ospf_conf = f"""hostname {node_name}
 password zebra
 enable password zebra
 log stdout
 service integrated-vtysh-config
 !
-router ospf
- ospf router-id {router_id}
 """
-        for n in networks:
-            ospf_conf += f" network {n} area 0\n"
+        # Gắn OSPF area 0 lên các interface cần quảng bá mạng (kể cả interface không có neighbor).
+        for ifn in ospf_ifaces:
+            ospf_conf += f"interface {ifn}\n ip ospf area 0\n!\n"
+
+        ospf_conf += "router ospf\n"
+        ospf_conf += f" ospf router-id {router_id}\n"
+        ospf_conf += " passive-interface default\n"
+        for ifn in active_neighbor_ifaces:
+            ospf_conf += f" no passive-interface {ifn}\n"
         if default_originate:
             ospf_conf += " default-information originate always\n"
         ospf_conf += "!\n"
@@ -302,19 +314,22 @@ router ospf
         ok_core = start_frr_ospf_in_ns(
             "core",
             "1.1.1.1",
-            networks=["10.255.0.0/30", "10.255.0.4/30", "203.0.113.0/24"],
+            ospf_ifaces=["core-d1", "core-d2"],
+            active_neighbor_ifaces=["core-d1", "core-d2"],
             default_originate=True,
         )
         ok_d1 = start_frr_ospf_in_ns(
             "dist1",
             "2.2.2.2",
-            networks=["10.255.0.0/30", "10.10.10.0/24", "10.10.20.0/24", "10.10.50.0/24", "10.10.60.0/24", "172.16.200.0/24"],
+            ospf_ifaces=["d1-core", "dist1-admin", "dist1-sales", "dist1-finance", "dist1-hr", "dist1-dmz"],
+            active_neighbor_ifaces=["d1-core"],
             default_originate=False,
         )
         ok_d2 = start_frr_ospf_in_ns(
             "dist2",
             "3.3.3.3",
-            networks=["10.255.0.4/30", "10.10.30.0/24", "10.10.40.0/24", "10.10.70.0/24"],
+            ospf_ifaces=["d2-core", "dist2-eng", "dist2-qa", "dist2-it"],
+            active_neighbor_ifaces=["d2-core"],
             default_originate=False,
         )
 
@@ -398,16 +413,22 @@ def configure(net: Mininet) -> None:
 
     # Link core <-> dist
     core.cmd(f"ip addr add {CORE_DIST1_CORE_IP} dev core-d1")
+    core.cmd("ip link set core-d1 up")
     dist1.cmd(f"ip addr add {CORE_DIST1_DIST_IP} dev d1-core")
+    dist1.cmd("ip link set d1-core up")
     core.cmd(f"ip addr add {CORE_DIST2_CORE_IP} dev core-d2")
+    core.cmd("ip link set core-d2 up")
     dist2.cmd(f"ip addr add {CORE_DIST2_DIST_IP} dev d2-core")
+    dist2.cmd("ip link set d2-core up")
 
     # Cổng outside của core và host internet
     core.cmd(f"ip addr add {CORE_OUTSIDE_IP} dev core-out")
+    core.cmd("ip link set core-out up")
     # Gán thêm VIP public để core trả lời ARP cho các địa chỉ Static NAT inbound
     for vip in PUBLIC_VIPS:
         core.cmd(f"ip addr add {vip} dev core-out")
     internet.cmd(f"ip addr add {INTERNET_IP} dev inet0")
+    internet.cmd("ip link set inet0 up")
     internet.cmd("ip route replace default via 203.0.113.2")
 
     # Gateway VLAN trên Distribution nối xuống Access
@@ -421,6 +442,7 @@ def configure(net: Mininet) -> None:
     }
     for _, (ifname, ip_cidr) in dist1_vlan_ifaces.items():
         dist1.cmd(f"ip addr add {ip_cidr} dev {ifname}")
+        dist1.cmd(f"ip link set {ifname} up")
 
     # dist2 quản lý: eng,qa,it
     dist2_vlan_ifaces = {
@@ -430,6 +452,7 @@ def configure(net: Mininet) -> None:
     }
     for _, (ifname, ip_cidr) in dist2_vlan_ifaces.items():
         dist2.cmd(f"ip addr add {ip_cidr} dev {ifname}")
+        dist2.cmd(f"ip link set {ifname} up")
 
     # Cấu hình IP host phòng ban: /24 + default GW theo VLAN
     info("*** Cấu hình IP/gateway cho các host Access...\n")
