@@ -96,14 +96,26 @@ def prepare_case(case: str, core_ns: str) -> None:
 
 def iperf3_server_once(server_ns: str, port: int) -> None:
     # -1: serve one client then exit
-    netns_exec(server_ns, f"pkill -f 'iperf3 -s' 2>/dev/null || true")
-    netns_exec(server_ns, f"nohup iperf3 -s -p {port} -1 >/tmp/iperf3_server.log 2>&1 &")
-    time.sleep(0.5)
+    netns_exec(server_ns, "command -v iperf3 >/dev/null 2>&1 || echo NO_IPERF3", timeout_s=2)
+    netns_exec(server_ns, f"pkill -f 'iperf3 -s' 2>/dev/null || true", timeout_s=2)
+    netns_exec(server_ns, f"nohup iperf3 -s -p {port} -1 >/tmp/iperf3_server.log 2>&1 &", timeout_s=2)
+    # wait until LISTEN (max ~2s)
+    for _ in range(6):
+        p = netns_exec(server_ns, f"ss -ltn 2>/dev/null | grep -q ':{port} ' ; echo $?", timeout_s=2)
+        if (p.stdout or "").strip().endswith("0"):
+            return
+        time.sleep(0.3)
+    # server may still be ok; don't hard fail here
 
 
 def iperf3_client_json(client_ns: str, server_ip: str, port: int, seconds: int) -> dict:
     # timeout buffer: iperf time + 5s
-    p = netns_exec(client_ns, f"iperf3 -c {server_ip} -p {port} -t {seconds} -J 2>/dev/null", timeout_s=seconds + 8)
+    # Dùng `timeout` bên trong namespace để chắc chắn không bị treo.
+    p = netns_exec(
+        client_ns,
+        f"command -v iperf3 >/dev/null 2>&1 || echo NO_IPERF3; timeout {seconds + 6} iperf3 -c {server_ip} -p {port} -t {seconds} -J 2>/dev/null",
+        timeout_s=seconds + 10,
+    )
     if p.returncode != 0 or not (p.stdout or "").strip():
         raise RuntimeError(f"iperf3 client lỗi (ns={client_ns}):\n{p.stdout}\n{p.stderr}")
     try:
