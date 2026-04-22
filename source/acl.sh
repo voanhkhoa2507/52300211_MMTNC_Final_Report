@@ -23,7 +23,7 @@ apply_acl() {
   echo "[ACL] Applying multi-layer ACL rules..."
 
   # ---------- Dọn rule cũ ----------
-  for n in core dist1 dist2; do
+  for n in core core2 dist1 dist2; do
     NS "$n" iptables -F || true
     NS "$n" iptables -t nat -F || true
     NS "$n" iptables -X || true
@@ -31,7 +31,7 @@ apply_acl() {
 
   # ---------- Chính sách mặc định ----------
   # Giữ INPUT thoáng để tránh “tự khóa” khi lab; siết chủ yếu ở FORWARD.
-  for n in core dist1 dist2; do
+  for n in core core2 dist1 dist2; do
     NS "$n" iptables -P INPUT ACCEPT
     NS "$n" iptables -P OUTPUT ACCEPT
     NS "$n" iptables -P FORWARD DROP
@@ -100,6 +100,11 @@ apply_acl() {
   NS core iptables -A FORWARD -i core-out -o core-d1 -d 172.16.200.0/24 -j DROP \
     -m comment --comment "FW: Internet -> DMZ deny all other"
 
+  # Core2 cũng là core dự phòng. VIP static NAT vẫn nằm ở core chính,
+  # nhưng để không làm "mất firewall" khi failover đường ra ngoài, ta áp chính sách biên tương tự:
+  # - Cho phép inside đi internet qua core2-out
+  # - Không chủ động mở inbound Internet -> DMZ qua core2 (vì VIP DNAT không nằm ở core2)
+
   # =========================================================
   # Cho phép inside -> internet (để người dùng đi ra ngoài qua PAT)
   # =========================================================
@@ -110,14 +115,36 @@ apply_acl() {
   NS dist2 iptables -A FORWARD -s 10.10.0.0/16 -o d2-core -j ACCEPT \
     -m comment --comment "FW: Inside (dist2) -> Core permit"
 
+  # Cho phép inside đi lên core2 ở lớp distribution (đường dự phòng)
+  NS dist1 iptables -A FORWARD -s 10.10.0.0/16 -o d1-core2 -j ACCEPT \
+    -m comment --comment "FW: Inside (dist1) -> Core2 permit"
+  NS dist2 iptables -A FORWARD -s 10.10.0.0/16 -o d2-core2 -j ACCEPT \
+    -m comment --comment "FW: Inside (dist2) -> Core2 permit"
+
   NS core iptables -A FORWARD -i core-d1 -o core-out -s 10.10.0.0/16 -j ACCEPT \
     -m comment --comment "FW: Inside via dist1 -> Internet permit"
   NS core iptables -A FORWARD -i core-d2 -o core-out -s 10.10.0.0/16 -j ACCEPT \
     -m comment --comment "FW: Inside via dist2 -> Internet permit"
 
+  # Nếu inside vào core qua các link dự phòng core-d1b/core-d2b thì cũng phải được phép ra ngoài
+  NS core iptables -A FORWARD -i core-d1b -o core-out -s 10.10.0.0/16 -j ACCEPT \
+    -m comment --comment "FW: Inside via dist1b -> Internet permit"
+  NS core iptables -A FORWARD -i core-d2b -o core-out -s 10.10.0.0/16 -j ACCEPT \
+    -m comment --comment "FW: Inside via dist2b -> Internet permit"
+
+  # Core2: inside -> internet
+  NS core2 iptables -A FORWARD -i core2-d1 -o core2-out -s 10.10.0.0/16 -j ACCEPT \
+    -m comment --comment "FW: Inside via dist1 -> Internet permit (core2)"
+  NS core2 iptables -A FORWARD -i core2-d2 -o core2-out -s 10.10.0.0/16 -j ACCEPT \
+    -m comment --comment "FW: Inside via dist2 -> Internet permit (core2)"
+
   # (Tùy chọn) cho phép DMZ -> internet (để lab thuận tiện)
   NS core iptables -A FORWARD -i core-d1 -o core-out -s 172.16.200.0/24 -j ACCEPT \
     -m comment --comment "FW: DMZ -> Internet permit"
+  NS core iptables -A FORWARD -i core-d1b -o core-out -s 172.16.200.0/24 -j ACCEPT \
+    -m comment --comment "FW: DMZ -> Internet permit (core-d1b)"
+  NS core2 iptables -A FORWARD -i core2-d1 -o core2-out -s 172.16.200.0/24 -j ACCEPT \
+    -m comment --comment "FW: DMZ -> Internet permit (core2)"
 
   echo "[ACL] Applied successfully."
 }
@@ -126,8 +153,8 @@ apply_acl() {
 # Gỡ/flush toàn bộ ACL
 # -------------------------------
 drop_acl() {
-  echo "[ACL] Dropping (flushing) all ACL rules on core/dist1/dist2..."
-  for n in core dist1 dist2; do
+  echo "[ACL] Dropping (flushing) all ACL rules on core/core2/dist1/dist2..."
+  for n in core core2 dist1 dist2; do
     NS "$n" iptables -F || true
     NS "$n" iptables -t nat -F || true
     NS "$n" iptables -X || true
