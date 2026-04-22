@@ -498,11 +498,35 @@ def _setup_nat(core) -> None:
 
     # Cho phép inside -> internet (mức cơ bản). ACL chi tiết nằm trong acl.sh.
     core.cmd("iptables -A FORWARD -i core-d1 -o core-out -s 10.10.0.0/16 -j ACCEPT")
+    core.cmd("iptables -A FORWARD -i core-d1b -o core-out -s 10.10.0.0/16 -j ACCEPT")
     core.cmd("iptables -A FORWARD -i core-d2 -o core-out -s 10.10.0.0/16 -j ACCEPT")
+    core.cmd("iptables -A FORWARD -i core-d2b -o core-out -s 10.10.0.0/16 -j ACCEPT")
 
     # Cho phép DMZ -> internet (phục vụ lab; có thể siết chặt thêm ở ACL)
     core.cmd("iptables -A FORWARD -i core-d1 -o core-out -s 172.16.200.0/24 -j ACCEPT")
+    core.cmd("iptables -A FORWARD -i core-d1b -o core-out -s 172.16.200.0/24 -j ACCEPT")
     core.cmd("iptables -t nat -A POSTROUTING -s 172.16.200.0/24 -o core-out -j MASQUERADE")
+
+
+def _setup_nat_core2(core2) -> None:
+    """
+    NAT/PAT tối thiểu cho core dự phòng.
+    - Bật PAT cho inside 10.10.0.0/16 ra outside qua core2-out
+    - Không gán VIP static NAT (để tránh ARP conflict); VIP vẫn nằm ở core chính.
+    """
+    core2.cmd("iptables -t nat -F")
+    core2.cmd("iptables -F")
+    core2.cmd("iptables -P FORWARD DROP")
+    core2.cmd("iptables -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT")
+
+    # Allow inside from dist1/dist2 -> outside
+    core2.cmd("iptables -A FORWARD -i core2-d1 -o core2-out -s 10.10.0.0/16 -j ACCEPT")
+    core2.cmd("iptables -A FORWARD -i core2-d2 -o core2-out -s 10.10.0.0/16 -j ACCEPT")
+    core2.cmd("iptables -t nat -A POSTROUTING -s 10.10.0.0/16 -o core2-out -j MASQUERADE")
+
+    # DMZ outbound (tuỳ chọn)
+    core2.cmd("iptables -A FORWARD -i core2-d1 -o core2-out -s 172.16.200.0/24 -j ACCEPT")
+    core2.cmd("iptables -t nat -A POSTROUTING -s 172.16.200.0/24 -o core2-out -j MASQUERADE")
 
 
 def configure(net: Mininet) -> None:
@@ -557,7 +581,12 @@ def configure(net: Mininet) -> None:
     core2.cmd("ip link set core2-out up")
     internet.cmd(f"ip addr add {INTERNET_IP} dev inet0")
     internet.cmd("ip link set inet0 up")
-    internet.cmd("ip route replace default via 203.0.113.2")
+    # Default gateway chính qua core; thêm tuyến dự phòng qua core2 (metric cao hơn)
+    internet.cmd("ip route replace default via 203.0.113.2 metric 100")
+    internet.cmd("ip route replace default via 203.0.113.3 metric 200")
+
+    # Default route cho core2 ra internet host (ISP gateway)
+    core2.cmd("ip route replace default via 203.0.113.1")
 
     # Gateway VLAN trên Distribution nối xuống Access
     # dist1 quản lý: admin,sales,finance,hr + DMZ
@@ -621,6 +650,8 @@ def configure(net: Mininet) -> None:
     # NAT/PAT trên core
     info("*** Cấu hình NAT/PAT (trên core)...\n")
     _setup_nat(core)
+    info("*** Cấu hình NAT/PAT tối thiểu (trên core2 - dự phòng)...\n")
+    _setup_nat_core2(core2)
 
     info("*** Hoàn tất. Bạn có thể test trong CLI.\n")
     info("    Ví dụ:\n")
