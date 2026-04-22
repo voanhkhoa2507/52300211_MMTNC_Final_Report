@@ -103,6 +103,13 @@ apply_acl() {
   # =========================================================
   # Cho phép inside -> internet (để người dùng đi ra ngoài qua PAT)
   # =========================================================
+  # LƯU Ý: vì dist1/dist2 đặt policy FORWARD=DROP, cần cho phép inside đi lên core ở lớp distribution.
+  # Nếu không có 2 rule dưới, inside sẽ bị chặn trước khi tới core-out.
+  NS dist1 iptables -A FORWARD -s 10.10.0.0/16 -o d1-core -j ACCEPT \
+    -m comment --comment "FW: Inside (dist1) -> Core permit"
+  NS dist2 iptables -A FORWARD -s 10.10.0.0/16 -o d2-core -j ACCEPT \
+    -m comment --comment "FW: Inside (dist2) -> Core permit"
+
   NS core iptables -A FORWARD -i core-d1 -o core-out -s 10.10.0.0/16 -j ACCEPT \
     -m comment --comment "FW: Inside via dist1 -> Internet permit"
   NS core iptables -A FORWARD -i core-d2 -o core-out -s 10.10.0.0/16 -j ACCEPT \
