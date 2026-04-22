@@ -14,10 +14,12 @@ Tóm tắt IP plan đã chốt:
   VLAN99  Mgmt         10.10.99.0/24   GW 10.10.99.1
 - DMZ: 172.16.200.0/24, GW 172.16.200.1
 - Public/Outside: 203.0.113.0/24
-  core outside: 203.0.113.2/24, host internet: 203.0.113.1/24
+  core outside: 203.0.113.2/24, core2 outside: 203.0.113.3/24, host internet: 203.0.113.1/24
 - Các link giữa router (/30):
   core <-> dist1: 10.255.0.0/30  core=10.255.0.1  dist1=10.255.0.2
   core <-> dist2: 10.255.0.4/30  core=10.255.0.5  dist2=10.255.0.6
+  core2 <-> dist1: 10.255.1.0/30 core2=10.255.1.1 dist1=10.255.1.2
+  core2 <-> dist2: 10.255.1.4/30 core2=10.255.1.5 dist2=10.255.1.6
 
 Kế hoạch NAT (đặt trên router core):
 - PAT (MASQUERADE) cho 10.10.0.0/16 đi ra ngoài qua core-out
@@ -93,8 +95,23 @@ CORE_DIST1_DIST_IP = "10.255.0.2/30"
 CORE_DIST2_CORE_IP = "10.255.0.5/30"
 CORE_DIST2_DIST_IP = "10.255.0.6/30"
 
+# Link dự phòng Core <-> Distribution (đường song song để tăng HA)
+# core <-> dist1: 10.255.0.8/30  core=10.255.0.9  dist1=10.255.0.10
+# core <-> dist2: 10.255.0.12/30 core=10.255.0.13 dist2=10.255.0.14
+CORE_DIST1B_CORE_IP = "10.255.0.9/30"
+CORE_DIST1B_DIST_IP = "10.255.0.10/30"
+CORE_DIST2B_CORE_IP = "10.255.0.13/30"
+CORE_DIST2B_DIST_IP = "10.255.0.14/30"
+
+# Core dự phòng (core2) nối lên dist1/dist2
+CORE2_DIST1_CORE_IP = "10.255.1.1/30"
+CORE2_DIST1_DIST_IP = "10.255.1.2/30"
+CORE2_DIST2_CORE_IP = "10.255.1.5/30"
+CORE2_DIST2_DIST_IP = "10.255.1.6/30"
+
 # Outside
 CORE_OUTSIDE_IP = "203.0.113.2/24"
+CORE2_OUTSIDE_IP = "203.0.113.3/24"
 INTERNET_IP = "203.0.113.1/24"
 
 # Public VIPs (Outside Global) cho Static NAT inbound vào DMZ.
@@ -110,6 +127,7 @@ class CampusTopo(Topo):
     def build(self):
         # Router L3 (Linux namespace)
         core = self.addHost("core", cls=LinuxRouter, ip=None)
+        core2 = self.addHost("core2", cls=LinuxRouter, ip=None)
         dist1 = self.addHost("dist1", cls=LinuxRouter, ip=None)
         dist2 = self.addHost("dist2", cls=LinuxRouter, ip=None)
 
@@ -119,9 +137,9 @@ class CampusTopo(Topo):
         # Link Core <-> Distribution
         self.addLink(core, dist1, intfName1="core-d1", intfName2="d1-core")
         self.addLink(core, dist2, intfName1="core-d2", intfName2="d2-core")
-
-        # Link Core <-> Internet (Outside)
-        self.addLink(core, internet, intfName1="core-out", intfName2="inet0")
+        # Link dự phòng (song song) Core <-> Distribution
+        self.addLink(core, dist1, intfName1="core-d1b", intfName2="d1-coreb")
+        self.addLink(core, dist2, intfName1="core-d2b", intfName2="d2-coreb")
 
         # Switch L2: dùng OVSSwitch ở chế độ standalone để KHÔNG cần controller vẫn forward L2.
         # Tránh tình trạng OVS failMode=secure làm không forward khi controller=None.
@@ -134,6 +152,16 @@ class CampusTopo(Topo):
                 # Một số môi trường cần dpid tường minh để tránh lỗi derive dpid
                 dpid=f"{dpid_int:016x}",
             )
+
+        # Outside switch (ISP segment) để nối core/core2/internet chung 1 broadcast domain
+        outside_sw = add_l2_switch("outside_sw", 301)
+        self.addLink(core, outside_sw, intfName1="core-out")
+        self.addLink(core2, outside_sw, intfName1="core2-out")
+        self.addLink(internet, outside_sw, intfName1="inet0")
+
+        # Link core2 <-> distribution (core dự phòng)
+        self.addLink(core2, dist1, intfName1="core2-d1", intfName2="d1-core2")
+        self.addLink(core2, dist2, intfName1="core2-d2", intfName2="d2-core2")
 
         # Switch Access (mỗi phòng ban/VLAN một switch)
         access_switches = {
@@ -303,9 +331,16 @@ line vty
         if node_name == "core":
             ospf_conf += " network 10.255.0.0/30 area 0\n"
             ospf_conf += " network 10.255.0.4/30 area 0\n"
+            ospf_conf += " network 10.255.0.8/30 area 0\n"
+            ospf_conf += " network 10.255.0.12/30 area 0\n"
             # Core chỉ cần quảng bá các link /30; các VLAN nằm phía dist.
+        elif node_name == "core2":
+            ospf_conf += " network 10.255.1.0/30 area 0\n"
+            ospf_conf += " network 10.255.1.4/30 area 0\n"
         elif node_name == "dist1":
             ospf_conf += " network 10.255.0.0/30 area 0\n"
+            ospf_conf += " network 10.255.0.8/30 area 0\n"
+            ospf_conf += " network 10.255.1.0/30 area 0\n"
             ospf_conf += " network 10.10.10.0/24 area 0\n"
             ospf_conf += " network 10.10.20.0/24 area 0\n"
             ospf_conf += " network 10.10.50.0/24 area 0\n"
@@ -315,6 +350,8 @@ line vty
             ospf_conf += " redistribute connected\n"
         elif node_name == "dist2":
             ospf_conf += " network 10.255.0.4/30 area 0\n"
+            ospf_conf += " network 10.255.0.12/30 area 0\n"
+            ospf_conf += " network 10.255.1.4/30 area 0\n"
             ospf_conf += " network 10.10.30.0/24 area 0\n"
             ospf_conf += " network 10.10.40.0/24 area 0\n"
             ospf_conf += " network 10.10.70.0/24 area 0\n"
@@ -358,26 +395,33 @@ line vty
         ok_core = start_frr_ospf_in_ns(
             "core",
             "1.1.1.1",
-            ospf_ifaces=["core-d1", "core-d2"],
-            active_neighbor_ifaces=["core-d1", "core-d2"],
+            ospf_ifaces=["core-d1", "core-d1b", "core-d2", "core-d2b"],
+            active_neighbor_ifaces=["core-d1", "core-d1b", "core-d2", "core-d2b"],
+            default_originate=True,
+        )
+        ok_core2 = start_frr_ospf_in_ns(
+            "core2",
+            "1.1.1.2",
+            ospf_ifaces=["core2-d1", "core2-d2"],
+            active_neighbor_ifaces=["core2-d1", "core2-d2"],
             default_originate=True,
         )
         ok_d1 = start_frr_ospf_in_ns(
             "dist1",
             "2.2.2.2",
-            ospf_ifaces=["d1-core", "dist1-admin", "dist1-sales", "dist1-finance", "dist1-hr", "dist1-dmz"],
-            active_neighbor_ifaces=["d1-core"],
+            ospf_ifaces=["d1-core", "d1-coreb", "d1-core2", "dist1-admin", "dist1-sales", "dist1-finance", "dist1-hr", "dist1-dmz"],
+            active_neighbor_ifaces=["d1-core", "d1-coreb", "d1-core2"],
             default_originate=False,
         )
         ok_d2 = start_frr_ospf_in_ns(
             "dist2",
             "3.3.3.3",
-            ospf_ifaces=["d2-core", "dist2-eng", "dist2-qa", "dist2-it"],
-            active_neighbor_ifaces=["d2-core"],
+            ospf_ifaces=["d2-core", "d2-coreb", "d2-core2", "dist2-eng", "dist2-qa", "dist2-it"],
+            active_neighbor_ifaces=["d2-core", "d2-coreb", "d2-core2"],
             default_originate=False,
         )
 
-        if ok_core and ok_d1 and ok_d2:
+        if ok_core and ok_core2 and ok_d1 and ok_d2:
             info("*** Đã bật OSPF trong namespace. Đợi 8s cho hội tụ neighbor...\n")
             time.sleep(8)
             return "ospf"
@@ -423,6 +467,12 @@ def _setup_nat(core) -> None:
     # Nếu thiếu 2 rule này, ping liên VLAN (dist1 <-> dist2) sẽ bị drop tại core.
     core.cmd("iptables -A FORWARD -i core-d1 -o core-d2 -j ACCEPT")
     core.cmd("iptables -A FORWARD -i core-d2 -o core-d1 -j ACCEPT")
+    core.cmd("iptables -A FORWARD -i core-d1b -o core-d2 -j ACCEPT")
+    core.cmd("iptables -A FORWARD -i core-d2 -o core-d1b -j ACCEPT")
+    core.cmd("iptables -A FORWARD -i core-d1 -o core-d2b -j ACCEPT")
+    core.cmd("iptables -A FORWARD -i core-d2b -o core-d1 -j ACCEPT")
+    core.cmd("iptables -A FORWARD -i core-d1b -o core-d2b -j ACCEPT")
+    core.cmd("iptables -A FORWARD -i core-d2b -o core-d1b -j ACCEPT")
 
     # PAT (Overload) cho người dùng inside
     core.cmd("iptables -t nat -A POSTROUTING -s 10.10.0.0/16 -o core-out -j MASQUERADE")
@@ -457,6 +507,7 @@ def configure(net: Mininet) -> None:
 
     info("*** Cấu hình IP các cổng router (core/dist)...\n")
     core = net["core"]
+    core2 = net["core2"]
     dist1 = net["dist1"]
     dist2 = net["dist2"]
     internet = net["internet"]
@@ -471,12 +522,35 @@ def configure(net: Mininet) -> None:
     dist2.cmd(f"ip addr add {CORE_DIST2_DIST_IP} dev d2-core")
     dist2.cmd("ip link set d2-core up")
 
-    # Cổng outside của core và host internet
+    # Link dự phòng core <-> dist (song song)
+    core.cmd(f"ip addr add {CORE_DIST1B_CORE_IP} dev core-d1b")
+    core.cmd("ip link set core-d1b up")
+    dist1.cmd(f"ip addr add {CORE_DIST1B_DIST_IP} dev d1-coreb")
+    dist1.cmd("ip link set d1-coreb up")
+    core.cmd(f"ip addr add {CORE_DIST2B_CORE_IP} dev core-d2b")
+    core.cmd("ip link set core-d2b up")
+    dist2.cmd(f"ip addr add {CORE_DIST2B_DIST_IP} dev d2-coreb")
+    dist2.cmd("ip link set d2-coreb up")
+
+    # Link core2 <-> dist (core dự phòng)
+    core2.cmd(f"ip addr add {CORE2_DIST1_CORE_IP} dev core2-d1")
+    core2.cmd("ip link set core2-d1 up")
+    dist1.cmd(f"ip addr add {CORE2_DIST1_DIST_IP} dev d1-core2")
+    dist1.cmd("ip link set d1-core2 up")
+
+    core2.cmd(f"ip addr add {CORE2_DIST2_CORE_IP} dev core2-d2")
+    core2.cmd("ip link set core2-d2 up")
+    dist2.cmd(f"ip addr add {CORE2_DIST2_DIST_IP} dev d2-core2")
+    dist2.cmd("ip link set d2-core2 up")
+
+    # Cổng outside của core/core2 và host internet (cùng segment outside_sw)
     core.cmd(f"ip addr add {CORE_OUTSIDE_IP} dev core-out")
     core.cmd("ip link set core-out up")
     # Gán thêm VIP public để core trả lời ARP cho các địa chỉ Static NAT inbound
     for vip in PUBLIC_VIPS:
         core.cmd(f"ip addr add {vip} dev core-out")
+    core2.cmd(f"ip addr add {CORE2_OUTSIDE_IP} dev core2-out")
+    core2.cmd("ip link set core2-out up")
     internet.cmd(f"ip addr add {INTERNET_IP} dev inet0")
     internet.cmd("ip link set inet0 up")
     internet.cmd("ip route replace default via 203.0.113.2")
