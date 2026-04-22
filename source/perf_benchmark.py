@@ -31,12 +31,16 @@ LOG_DIR = PROJECT_ROOT / "logs" / "perf"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def sh(cmd: list[str], check: bool = False) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, text=True, capture_output=True, check=check)
+def sh(cmd: list[str], check: bool = False, timeout_s: int | None = None) -> subprocess.CompletedProcess:
+    try:
+        return subprocess.run(cmd, text=True, capture_output=True, check=check, timeout=timeout_s)
+    except subprocess.TimeoutExpired as e:
+        # Chuẩn hoá để caller không bị crash
+        return subprocess.CompletedProcess(cmd, returncode=124, stdout=e.stdout or "", stderr=(e.stderr or "") + "\nTIMEOUT\n")
 
 
-def netns_exec(ns: str, cmd: str) -> subprocess.CompletedProcess:
-    return sh(["ip", "netns", "exec", ns, "bash", "-lc", cmd], check=False)
+def netns_exec(ns: str, cmd: str, timeout_s: int | None = None) -> subprocess.CompletedProcess:
+    return sh(["ip", "netns", "exec", ns, "bash", "-lc", cmd], check=False, timeout_s=timeout_s)
 
 
 def ensure_netns(ns: str) -> None:
@@ -98,8 +102,9 @@ def iperf3_server_once(server_ns: str, port: int) -> None:
 
 
 def iperf3_client_json(client_ns: str, server_ip: str, port: int, seconds: int) -> dict:
-    p = netns_exec(client_ns, f"iperf3 -c {server_ip} -p {port} -t {seconds} -J 2>/dev/null")
-    if p.returncode != 0:
+    # timeout buffer: iperf time + 5s
+    p = netns_exec(client_ns, f"iperf3 -c {server_ip} -p {port} -t {seconds} -J 2>/dev/null", timeout_s=seconds + 8)
+    if p.returncode != 0 or not (p.stdout or "").strip():
         raise RuntimeError(f"iperf3 client lỗi (ns={client_ns}):\n{p.stdout}\n{p.stderr}")
     try:
         return json.loads(p.stdout)
@@ -108,7 +113,9 @@ def iperf3_client_json(client_ns: str, server_ip: str, port: int, seconds: int) 
 
 
 def ping_avg_ms(client_ns: str, dst_ip: str, count: int) -> float:
-    p = netns_exec(client_ns, f"ping -c {count} -n {dst_ip} 2>/dev/null | tail -n 1 || true")
+    # -w: deadline tổng (giây) để không treo khi route/ACL lỗi
+    deadline = max(2, count * 2)
+    p = netns_exec(client_ns, f"ping -c {count} -w {deadline} -n {dst_ip} 2>/dev/null | tail -n 1 || true", timeout_s=deadline + 3)
     line = (p.stdout or "").strip()
     # rtt min/avg/max/mdev = 0.172/0.439/0.905/0.330 ms
     if "min/avg" not in line:
@@ -137,6 +144,7 @@ def main() -> int:
     ap.add_argument("--iperf-seconds", type=int, default=5)
     ap.add_argument("--ping-count", type=int, default=5)
     ap.add_argument("--repeat", type=int, default=2, help="Mỗi case lặp N lần, lấy trung bình (mặc định 2)")
+    ap.add_argument("--fail-soft", action="store_true", help="Không dừng khi 1 case lỗi; ghi -1 và chạy tiếp")
     args = ap.parse_args()
 
     for ns in [args.client_ns, args.server_ns, args.core_ns]:
@@ -158,17 +166,26 @@ def main() -> int:
         ping_list: list[float] = []
 
         for _ in range(max(1, args.repeat)):
-            iperf3_server_once(args.server_ns, args.iperf_port)
-            raw = iperf3_client_json(args.client_ns, args.server_ip, args.iperf_port, args.iperf_seconds)
-            all_raw[case].append(raw)
+            try:
+                iperf3_server_once(args.server_ns, args.iperf_port)
+                raw = iperf3_client_json(args.client_ns, args.server_ip, args.iperf_port, args.iperf_seconds)
+                all_raw[case].append(raw)
+                bps = raw.get("end", {}).get("sum_sent", {}).get("bits_per_second", 0.0)
+                thr_list.append(float(bps) / 1_000_000.0)
+            except Exception as e:
+                if not args.fail_soft:
+                    raise
+                all_raw[case].append({"error": str(e)})
+                thr_list.append(-1.0)
 
-            bps = raw.get("end", {}).get("sum_sent", {}).get("bits_per_second", 0.0)
-            thr_list.append(float(bps) / 1_000_000.0)
+            # ping không bắt buộc phải thành công; lỗi -> -1
             ping_list.append(ping_avg_ms(args.client_ns, args.server_ip, args.ping_count))
             time.sleep(0.3)
 
-        thr_avg = sum(thr_list) / len(thr_list)
-        ping_avg = sum([p for p in ping_list if p >= 0]) / max(1, len([p for p in ping_list if p >= 0]))
+        ok_thr = [t for t in thr_list if t >= 0]
+        ok_ping = [p for p in ping_list if p >= 0]
+        thr_avg = (sum(ok_thr) / len(ok_thr)) if ok_thr else -1.0
+        ping_avg = (sum(ok_ping) / len(ok_ping)) if ok_ping else -1.0
         rows.append(ResultRow(case=case, throughput_mbps=thr_avg, ping_avg_ms=ping_avg))
 
     # Export
