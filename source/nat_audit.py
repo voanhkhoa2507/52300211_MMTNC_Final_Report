@@ -301,12 +301,25 @@ def export_incident(out_csv: Path) -> None:
     print(f"[OK] Đã xuất incident log CSV: {out_csv} (rows={len(rows)})")
 
 
-CONNTRACK_LINE_RE = re.compile(
-    r"^(?P<ts>\[[^\]]+\])?\s*(?P<event>NEW|DESTROY)?\s*(?P<proto>tcp|udp|icmp)\s+\d+\s+"
-    r"(?P<state>[A-Z_]+)?\s*"
-    r"(?:src=(?P<src>[0-9.]+)\s+dst=(?P<dst>[0-9.]+)\s+sport=(?P<sport>\d+)\s+dport=(?P<dport>\d+))",
-    re.IGNORECASE,
-)
+def _ct_kv(line: str, key: str) -> str:
+    m = re.search(rf"\b{re.escape(key)}=([0-9.]+)\b", line)
+    return m.group(1) if m else ""
+
+
+def _ct_kv_int(line: str, key: str) -> str:
+    m = re.search(rf"\b{re.escape(key)}=(\d+)\b", line)
+    return m.group(1) if m else ""
+
+
+def _ct_event(line: str) -> str:
+    m = re.search(r"\b(NEW|DESTROY)\b", line)
+    return (m.group(1) if m else "").upper()
+
+
+def _ct_proto(line: str) -> str:
+    # conntrack line thường bắt đầu bằng " [timestamp] NEW tcp ..." hoặc "tcp ..."
+    m = re.search(r"\b(tcp|udp|icmp)\b", line, flags=re.IGNORECASE)
+    return (m.group(1) if m else "").lower()
 
 
 def capture_incident_conntrack(core_ns: str, seconds: int, out_csv: Path, vip: str) -> None:
@@ -334,16 +347,17 @@ def capture_incident_conntrack(core_ns: str, seconds: int, out_csv: Path, vip: s
     for line in out.splitlines():
         if not line.strip():
             continue
-        m = CONNTRACK_LINE_RE.search(line)
-        if not m:
+        ts = (line.split("]", 1)[0] + "]") if line.lstrip().startswith("[") and "]" in line else ""
+        event = _ct_event(line)
+        proto = _ct_proto(line)
+        src = _ct_kv(line, "src")
+        dst = _ct_kv(line, "dst")
+        sport = _ct_kv_int(line, "sport")
+        dport = _ct_kv_int(line, "dport")
+
+        # Chỉ lấy các dòng có ít nhất src/dst (icmp có thể không có sport/dport)
+        if not src or not dst:
             continue
-        ts = (m.group("ts") or "").strip() or ""
-        event = (m.group("event") or "").strip().upper() or ""
-        proto = (m.group("proto") or "").strip().lower()
-        src = (m.group("src") or "").strip()
-        dst = (m.group("dst") or "").strip()
-        sport = (m.group("sport") or "").strip()
-        dport = (m.group("dport") or "").strip()
 
         # Tag direction for report readability
         direction = ""
