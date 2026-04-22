@@ -35,7 +35,7 @@ import matplotlib
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-LOG_DIR = PROJECT_ROOT / "logs"
+LOG_DIR = PROJECT_ROOT / "logs" / "loadbalancer"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 CSV_PATH = LOG_DIR / "load_balancing_timeseries.csv"

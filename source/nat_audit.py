@@ -30,7 +30,7 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-LOG_DIR = PROJECT_ROOT / "logs"
+LOG_DIR = PROJECT_ROOT / "logs" / "nat"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -159,6 +159,7 @@ def snapshot(core_ns: str) -> None:
 
 TRACE_PREFIX = "NATTRACE "
 TRACE_TAG = "NATTRACE:rule"
+TRACE_STATE_PATH = LOG_DIR / "trace_state.txt"
 
 
 def enable_trace(core_ns: str, vip: str = "203.0.113.11") -> None:
@@ -198,6 +199,8 @@ def enable_trace(core_ns: str, vip: str = "203.0.113.11") -> None:
 
     # Khuyến nghị dmesg timestamp để xuất incident có thời gian
     sh(["bash", "-lc", "dmesg -T >/dev/null 2>&1 || true"])
+    # Lưu mốc thời gian để export-incident lọc đúng khoảng
+    TRACE_STATE_PATH.write_text(str(int(time.time())) + "\n", encoding="utf-8")
     print("[OK] Đã bật trace (iptables LOG). Tạo traffic rồi chạy export-incident.")
 
 
@@ -210,30 +213,58 @@ def disable_trace(core_ns: str) -> None:
         if TRACE_TAG in r and r.startswith("-A FORWARD "):
             del_line = r.replace("-A", "-D", 1)
             netns_exec(core_ns, f"iptables {del_line} 2>/dev/null || true")
+    try:
+        TRACE_STATE_PATH.unlink(missing_ok=True)  # type: ignore[call-arg]
+    except Exception:
+        pass
     print("[OK] Đã tắt trace.")
 
 
-DMESG_RE = re.compile(
-    r"^(?P<ts>\\[[^\\]]+\\]|\\w{3}\\s+\\d+\\s[\\d:]+).*?NATTRACE\\s+(?P<dir>IN_DMZ|OUT_INSIDE)\\s+(?P<rest>.*)$"
-)
+LINE_RE = re.compile(r"NATTRACE\s+(?P<dir>IN_DMZ|OUT_INSIDE)\s+(?P<rest>.*)$")
+
+
+def _read_kernel_logs_since(epoch_s: int | None) -> str:
+    """
+    Ưu tiên journalctl -k (nếu có systemd/journald), fallback /var/log/kern.log, cuối cùng dmesg.
+    """
+    if epoch_s is not None and have_cmd("journalctl"):
+        # --since @<epoch> hỗ trợ trên đa số distro systemd
+        p = sh(["bash", "-lc", f"journalctl -k --no-pager --since '@{epoch_s}' 2>/dev/null || true"])
+        if (p.stdout or "").strip():
+            return p.stdout
+
+    # kern.log (Ubuntu thường có nếu rsyslog đang chạy)
+    p = sh(["bash", "-lc", "test -f /var/log/kern.log && tail -n 5000 /var/log/kern.log || true"])
+    if (p.stdout or "").strip():
+        return p.stdout
+
+    # dmesg fallback
+    return sh(["bash", "-lc", "dmesg --color=never 2>/dev/null | tail -n 5000 || true"]).stdout or ""
 
 
 def export_incident(out_csv: Path) -> None:
     """
     Trích incident từ dmesg theo prefix NATTRACE.
     """
-    # -T có thể không luôn có, nên lấy raw rồi parse mềm.
-    out = sh(["bash", "-lc", "dmesg --color=never 2>/dev/null | tail -n 5000 || true"]).stdout or ""
+    since: int | None = None
+    try:
+        if TRACE_STATE_PATH.exists():
+            since = int(TRACE_STATE_PATH.read_text(encoding="utf-8").strip() or "0")
+    except Exception:
+        since = None
+
+    out = _read_kernel_logs_since(since)
     rows: list[list[str]] = []
     for line in out.splitlines():
         if "NATTRACE" not in line:
             continue
-        m = DMESG_RE.search(line)
+        m = LINE_RE.search(line)
         if not m:
             continue
-        ts = m.group("ts")
         direction = m.group("dir")
         rest = m.group("rest")
+        # timestamp: lấy phần đầu dòng (journal/kern/dmesg khác nhau) => cắt trước "NATTRACE"
+        ts = line.split("NATTRACE", 1)[0].strip()
         # Parse SRC/DST/SPT/DPT/PROTO nếu có
         src = dst = spt = dpt = proto = ""
         mm = re.search(r"\bSRC=([0-9.]+)\b", rest)
