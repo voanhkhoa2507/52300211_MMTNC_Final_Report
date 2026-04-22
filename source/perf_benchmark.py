@@ -40,7 +40,11 @@ def sh(cmd: list[str], check: bool = False, timeout_s: int | None = None) -> sub
 
 
 def netns_exec(ns: str, cmd: str, timeout_s: int | None = None) -> subprocess.CompletedProcess:
-    return sh(["ip", "netns", "exec", ns, "bash", "-lc", cmd], check=False, timeout_s=timeout_s)
+    # Bọc timeout ở cấp shell để tránh trường hợp subprocess timeout vẫn kẹt.
+    if timeout_s is not None:
+        wrapped = f"timeout {int(timeout_s)} ip netns exec {ns} bash -lc {json.dumps(cmd)}"
+        return sh(["bash", "-lc", wrapped], check=False, timeout_s=timeout_s + 3)
+    return sh(["ip", "netns", "exec", ns, "bash", "-lc", cmd], check=False, timeout_s=None)
 
 
 def ensure_netns(ns: str) -> None:
