@@ -333,10 +333,12 @@ line vty
             ospf_conf += " network 10.255.0.4/30 area 0\n"
             ospf_conf += " network 10.255.0.8/30 area 0\n"
             ospf_conf += " network 10.255.0.12/30 area 0\n"
+            ospf_conf += " network 203.0.113.0/24 area 0\n"
             # Core chỉ cần quảng bá các link /30; các VLAN nằm phía dist.
         elif node_name == "core2":
             ospf_conf += " network 10.255.1.0/30 area 0\n"
             ospf_conf += " network 10.255.1.4/30 area 0\n"
+            ospf_conf += " network 203.0.113.0/24 area 0\n"
         elif node_name == "dist1":
             ospf_conf += " network 10.255.0.0/30 area 0\n"
             ospf_conf += " network 10.255.0.8/30 area 0\n"
@@ -359,6 +361,8 @@ line vty
         ospf_conf += " passive-interface default\n"
         for ifn in active_neighbor_ifaces:
             ospf_conf += f" no passive-interface {ifn}\n"
+        if node_name in ("core", "core2"):
+            ospf_conf += " redistribute connected\n"
         if default_originate:
             ospf_conf += " default-information originate always\n"
         ospf_conf += "!\n"
@@ -395,14 +399,14 @@ line vty
         ok_core = start_frr_ospf_in_ns(
             "core",
             "1.1.1.1",
-            ospf_ifaces=["core-d1", "core-d1b", "core-d2", "core-d2b"],
+            ospf_ifaces=["core-d1", "core-d1b", "core-d2", "core-d2b", "core-out"],
             active_neighbor_ifaces=["core-d1", "core-d1b", "core-d2", "core-d2b"],
             default_originate=True,
         )
         ok_core2 = start_frr_ospf_in_ns(
             "core2",
             "1.1.1.2",
-            ospf_ifaces=["core2-d1", "core2-d2"],
+            ospf_ifaces=["core2-d1", "core2-d2", "core2-out"],
             active_neighbor_ifaces=["core2-d1", "core2-d2"],
             default_originate=True,
         )
