@@ -164,6 +164,24 @@ def main() -> int:
 
     ap = argparse.ArgumentParser()
     ap.add_argument("--interval", type=float, default=5.0, help="Chu kỳ giám sát (giây). Mặc định 5s")
+    ap.add_argument(
+        "--plot-interval",
+        type=float,
+        default=0.25,
+        help="Chu kỳ cập nhật biểu đồ (giây). Mặc định 0.25s (nhanh hơn interval).",
+    )
+    ap.add_argument(
+        "--save-every",
+        type=float,
+        default=5.0,
+        help="Mỗi bao nhiêu giây thì lưu PNG (0 = không lưu). Mặc định 5s.",
+    )
+    ap.add_argument(
+        "--window",
+        type=int,
+        default=180,
+        help="Số điểm gần nhất giữ trên biểu đồ. Mặc định 180.",
+    )
     ap.add_argument("--capacity-mbps", type=float, default=100.0, help="Dung lượng giả lập để quy đổi %% tải. Mặc định 100 Mbps")
     ap.add_argument("--failover", type=float, default=80.0, help="Ngưỡng %% kích hoạt failover. Mặc định 80")
     ap.add_argument("--restore", type=float, default=20.0, help="Ngưỡng %% khôi phục. Mặc định 20")
@@ -207,6 +225,7 @@ def main() -> int:
     ax.set_xlabel("Thời gian (s)")
     ax.set_ylabel("Mbps (TX)")
     ax.grid(True, linestyle="--", alpha=0.4)
+    fig.tight_layout()
 
     t0 = time.time()
     xs: list[float] = []
@@ -288,7 +307,14 @@ def main() -> int:
     )
 
     try:
+        last_plot_ts = 0.0
+        last_save_ts = 0.0
+        last_csv_ts = 0.0
+        autoscale_every = 8  # tránh autoscale mỗi frame (rất chậm)
+        frame = 0
+
         while True:
+            loop_ts = time.time()
             p_mbps = primary.sample_mbps_tx()
             b_mbps = backup.sample_mbps_tx()
             p_load = (p_mbps / args.capacity_mbps) * 100.0 if args.capacity_mbps > 0 else 0.0
@@ -302,35 +328,49 @@ def main() -> int:
             elif active == "backup" and b_load < args.restore:
                 apply_redirect(args.primary_ip, "primary")
 
-            # Append CSV
-            ts = time.time()
-            with CSV_PATH.open("a", newline="", encoding="utf-8") as f:
-                w = csv.writer(f)
-                w.writerow([ts, f"{p_mbps:.3f}", f"{b_mbps:.3f}", active])
+            # Append CSV (theo interval để file không phình quá nhanh nếu plot-interval nhỏ)
+            if (loop_ts - last_csv_ts) >= max(0.1, args.interval):
+                with CSV_PATH.open("a", newline="", encoding="utf-8") as f:
+                    w = csv.writer(f)
+                    w.writerow([loop_ts, f"{p_mbps:.3f}", f"{b_mbps:.3f}", active])
+                last_csv_ts = loop_ts
 
-            # Update plot
-            x = ts - t0
+            # Cập nhật dữ liệu plot mỗi vòng (nhẹ), nhưng chỉ redraw theo plot-interval
+            x = loop_ts - t0
             xs.append(x)
             y1.append(p_mbps)
             y2.append(b_mbps)
-            # Keep last 120 points
-            if len(xs) > 120:
-                xs[:] = xs[-120:]
-                y1[:] = y1[-120:]
-                y2[:] = y2[-120:]
 
-            l1.set_data(xs, y1)
-            l2.set_data(xs, y2)
-            ax.relim()
-            ax.autoscale_view()
+            # Keep last N points
+            if args.window > 0 and len(xs) > args.window:
+                xs[:] = xs[-args.window :]
+                y1[:] = y1[-args.window :]
+                y2[:] = y2[-args.window :]
 
-            fig.tight_layout()
-            fig.canvas.draw_idle()
-            if has_display:
-                plt.pause(0.001)
-            fig.savefig(PNG_PATH, dpi=140)
+            # Redraw/refresh theo plot-interval (mượt hơn, ít tốn CPU hơn)
+            if (loop_ts - last_plot_ts) >= max(0.01, args.plot_interval):
+                l1.set_data(xs, y1)
+                l2.set_data(xs, y2)
+                frame += 1
+                if frame % autoscale_every == 0:
+                    ax.relim()
+                    ax.autoscale_view()
+                else:
+                    # cập nhật xlim nhẹ để chạy theo thời gian
+                    if xs:
+                        ax.set_xlim(max(0.0, xs[0]), xs[-1] + 1.0)
 
-            time.sleep(args.interval)
+                fig.canvas.draw_idle()
+                if has_display:
+                    plt.pause(0.001)
+                last_plot_ts = loop_ts
+
+            # Lưu PNG định kỳ (save mỗi vòng rất chậm)
+            if args.save_every and args.save_every > 0 and (loop_ts - last_save_ts) >= args.save_every:
+                fig.savefig(PNG_PATH, dpi=140)
+                last_save_ts = loop_ts
+
+            time.sleep(max(0.01, args.interval))
     except KeyboardInterrupt:
         log_event("Stop LB: KeyboardInterrupt")
         return 0
