@@ -301,12 +301,83 @@ def export_incident(out_csv: Path) -> None:
     print(f"[OK] Đã xuất incident log CSV: {out_csv} (rows={len(rows)})")
 
 
+CONNTRACK_LINE_RE = re.compile(
+    r"^(?P<ts>\[[^\]]+\])?\s*(?P<event>NEW|DESTROY)?\s*(?P<proto>tcp|udp|icmp)\s+\d+\s+"
+    r"(?P<state>[A-Z_]+)?\s*"
+    r"(?:src=(?P<src>[0-9.]+)\s+dst=(?P<dst>[0-9.]+)\s+sport=(?P<sport>\d+)\s+dport=(?P<dport>\d+))",
+    re.IGNORECASE,
+)
+
+
+def capture_incident_conntrack(core_ns: str, seconds: int, out_csv: Path, vip: str) -> None:
+    """
+    Fallback khi iptables LOG không ra kernel log: dùng conntrack -E để bắt sự kiện NEW/DESTROY.
+
+    Yêu cầu:
+    - gói conntrack (conntrack-tools) phải có sẵn. Nếu thiếu: sudo apt-get install -y conntrack
+    """
+    if not have_cmd("conntrack"):
+        print("[LỖI] Không tìm thấy lệnh conntrack. Cài bằng: sudo apt-get install -y conntrack")
+        out_csv.write_text("", encoding="utf-8")
+        return
+
+    # Chạy conntrack trong namespace core để capture NAT/PAT flows qua core.
+    # -E: event, -o timestamp: thêm timestamp tương đối (nếu hỗ trợ)
+    cmd = (
+        f"timeout {max(1, seconds)} "
+        "conntrack -E -o timestamp 2>/dev/null || "
+        f"timeout {max(1, seconds)} conntrack -E 2>/dev/null"
+    )
+    out = netns_exec(core_ns, cmd)
+
+    rows: list[list[str]] = []
+    for line in out.splitlines():
+        if not line.strip():
+            continue
+        m = CONNTRACK_LINE_RE.search(line)
+        if not m:
+            continue
+        ts = (m.group("ts") or "").strip() or ""
+        event = (m.group("event") or "").strip().upper() or ""
+        proto = (m.group("proto") or "").strip().lower()
+        src = (m.group("src") or "").strip()
+        dst = (m.group("dst") or "").strip()
+        sport = (m.group("sport") or "").strip()
+        dport = (m.group("dport") or "").strip()
+
+        # Tag direction for report readability
+        direction = ""
+        if dst.startswith("172.16.200."):
+            direction = "IN_DMZ"
+        elif src.startswith("10.10."):
+            direction = "OUT_INSIDE"
+        elif src.startswith("172.16.200."):
+            direction = "OUT_DMZ"
+        else:
+            direction = "OTHER"
+
+        # Extra hint: VIP traffic (public VIP as destination)
+        vip_hit = "vip_hit" if dst == vip else ""
+
+        rows.append([ts, event, direction, proto, src, sport, dst, dport, vip_hit, line.strip()])
+
+    with out_csv.open("w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["timestamp", "event", "direction", "proto", "src_ip", "src_port", "dst_ip", "dst_port", "tag", "raw"])
+        w.writerows(rows)
+
+    print(f"[OK] Conntrack incident CSV: {out_csv} (rows={len(rows)})")
+    if len(rows) == 0:
+        print("[GỢI Ý] Nếu rows=0: hãy tạo traffic TRONG lúc script đang capture (trong 15s).")
+
+
 def build_argparser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser()
-    ap.add_argument("action", choices=["snapshot", "enable-trace", "disable-trace", "export-incident"])
+    ap.add_argument("action", choices=["snapshot", "enable-trace", "disable-trace", "export-incident", "capture-incident"])
     ap.add_argument("--core-ns", default="core", help="Namespace core (mặc định core)")
     ap.add_argument("--vip", default="203.0.113.11", help="VIP web chính để tham khảo (mặc định 203.0.113.11)")
     ap.add_argument("--out", default="", help="Đường dẫn output CSV (chỉ dùng cho export-incident)")
+    ap.add_argument("--seconds", type=int, default=15, help="Số giây capture conntrack (chỉ dùng cho capture-incident). Mặc định 15s")
     return ap
 
 
@@ -325,6 +396,11 @@ def main() -> int:
         ts = time.strftime("%Y%m%d_%H%M%S")
         out = Path(args.out) if args.out else (LOG_DIR / f"incident_nattrace_{ts}.csv")
         export_incident(out)
+        return 0
+    if args.action == "capture-incident":
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        out = Path(args.out) if args.out else (LOG_DIR / f"incident_conntrack_{ts}.csv")
+        capture_incident_conntrack(core_ns=args.core_ns, seconds=args.seconds, out_csv=out, vip=args.vip)
         return 0
     return 0
 
