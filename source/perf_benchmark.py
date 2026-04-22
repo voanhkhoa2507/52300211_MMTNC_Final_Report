@@ -25,6 +25,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+import matplotlib
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 LOG_DIR = PROJECT_ROOT / "logs" / "perf"
@@ -150,6 +152,72 @@ class ResultRow:
     ping_avg_ms: float
 
 
+CASE_LABELS = {
+    "no_nat_no_acl": "No NAT / No ACL",
+    "nat_only": "NAT only",
+    "acl_only": "ACL only",
+    "nat_and_acl": "NAT + ACL",
+}
+
+
+def render_perf_table_png(
+    rows: list[ResultRow],
+    out_png: Path,
+    title: str,
+    subtitle: str,
+) -> None:
+    has_display = bool(__import__("os").environ.get("DISPLAY"))
+    if not has_display:
+        matplotlib.use("Agg")
+    import matplotlib.pyplot as plt  # noqa: WPS433
+
+    def fmt(v: float) -> str:
+        return "N/A" if v < 0 else f"{v:.3f}"
+
+    # Giữ thứ tự cố định
+    order = ["no_nat_no_acl", "nat_only", "acl_only", "nat_and_acl"]
+    rows_sorted = sorted(rows, key=lambda r: order.index(r.case) if r.case in order else 999)
+
+    col_labels = ["Path"] + [CASE_LABELS.get(r.case, r.case) for r in rows_sorted]
+    throughput = ["Throughput (Mbps)"] + [fmt(r.throughput_mbps) for r in rows_sorted]
+    latency = ["Latency avg (ms)"] + [fmt(r.ping_avg_ms) for r in rows_sorted]
+    cell_text = [throughput, latency]
+
+    fig, ax = plt.subplots(figsize=(12.5, 3.2))
+    ax.axis("off")
+
+    fig.text(0.5, 0.95, title, ha="center", va="top", fontsize=16, fontweight="bold")
+    fig.text(0.5, 0.88, subtitle, ha="center", va="top", fontsize=12, fontweight="bold")
+
+    table = ax.table(
+        cellText=cell_text,
+        colLabels=col_labels,
+        cellLoc="center",
+        colLoc="center",
+        loc="center",
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(11)
+    table.scale(1.0, 2.0)
+
+    header_color = "#d9edf7"
+    left_color = "#f4b183"
+    edge_color = "#111111"
+    for (r, c), cell in table.get_celld().items():
+        cell.set_edgecolor(edge_color)
+        cell.set_linewidth(1.5)
+        if r == 0:
+            cell.set_facecolor(header_color)
+            cell.set_text_props(fontweight="bold")
+        if c == 0:
+            cell.set_facecolor(left_color)
+            cell.set_text_props(fontweight="bold")
+
+    fig.tight_layout(rect=(0.02, 0.02, 0.98, 0.84))
+    fig.savefig(out_png, dpi=170)
+    plt.close(fig)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--client-ns", default="ad_pc1", help="Namespace client inside (mặc định ad_pc1)")
@@ -161,6 +229,10 @@ def main() -> int:
     ap.add_argument("--ping-count", type=int, default=5)
     ap.add_argument("--repeat", type=int, default=2, help="Mỗi case lặp N lần, lấy trung bình (mặc định 2)")
     ap.add_argument("--fail-soft", action="store_true", help="Không dừng khi 1 case lỗi; ghi -1 và chạy tiếp")
+    ap.add_argument("--no-csv", action="store_true", help="Không ghi CSV kết quả (chỉ ghi PNG/JSON nếu bật).")
+    ap.add_argument("--no-json", action="store_true", help="Không ghi raw JSON.")
+    ap.add_argument("--render-table", action="store_true", help="Vẽ bảng PNG sau khi benchmark.")
+    ap.add_argument("--out-png", default="", help="Đường dẫn PNG output (mặc định logs/perf/perf_table.png)")
     args = ap.parse_args()
 
     for ns in [args.client_ns, args.server_ns, args.core_ns]:
@@ -170,6 +242,7 @@ def main() -> int:
     ts = time.strftime("%Y%m%d_%H%M%S")
     out_csv = LOG_DIR / f"perf_table_{ts}.csv"
     out_raw = LOG_DIR / f"perf_raw_{ts}.json"
+    out_png = Path(args.out_png) if args.out_png else (LOG_DIR / "perf_table.png")
 
     all_raw: dict[str, list[dict]] = {c: [] for c in cases}
     rows: list[ResultRow] = []
@@ -204,17 +277,27 @@ def main() -> int:
         ping_avg = (sum(ok_ping) / len(ok_ping)) if ok_ping else -1.0
         rows.append(ResultRow(case=case, throughput_mbps=thr_avg, ping_avg_ms=ping_avg))
 
-    # Export
-    with out_csv.open("w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
-        w.writerow(["case", "throughput_mbps_tcp", "ping_avg_ms"])
-        for r in rows:
-            w.writerow([r.case, f"{r.throughput_mbps:.3f}", f"{r.ping_avg_ms:.3f}"])
+    # Export (tuỳ chọn)
+    if not args.no_csv:
+        with out_csv.open("w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow(["case", "throughput_mbps_tcp", "ping_avg_ms"])
+            for r in rows:
+                w.writerow([r.case, f"{r.throughput_mbps:.3f}", f"{r.ping_avg_ms:.3f}"])
+        print(f"[OK] Perf table CSV: {out_csv}")
 
-    out_raw.write_text(json.dumps(all_raw, ensure_ascii=False, indent=2), encoding="utf-8")
+    if not args.no_json:
+        out_raw.write_text(json.dumps(all_raw, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"[OK] Perf raw JSON : {out_raw}")
 
-    print(f"[OK] Perf table CSV: {out_csv}")
-    print(f"[OK] Perf raw JSON : {out_raw}")
+    if args.render_table:
+        render_perf_table_png(
+            rows=rows,
+            out_png=out_png,
+            title="BẢNG SO SÁNH HIỆU NĂNG (NAT / ACL)",
+            subtitle=f"TỪ [{args.client_ns}] ĐẾN [{args.server_ns}] (server_ip={args.server_ip})",
+        )
+        print(f"[OK] Perf table PNG: {out_png}")
     return 0
 
 
