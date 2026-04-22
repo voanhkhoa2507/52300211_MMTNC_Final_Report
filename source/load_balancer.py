@@ -73,8 +73,18 @@ def detect_data_intf(ns: str) -> str:
     if out and out != "lo":
         return out
 
-    out = netns_exec(ns, "ls /sys/class/net 2>/dev/null | tr ' ' '\\n' | grep -v '^lo$' | head -n 1").strip()
-    return out if out else "eth0"
+    # Fallback: chọn interface có tổng (rx+tx) lớn nhất (tránh chọn nhầm interface không có traffic)
+    candidates = netns_exec(ns, "ls -1 /sys/class/net 2>/dev/null | grep -v '^lo$' || true").splitlines()
+    best = ""
+    best_bytes = -1
+    for ifname in [c.strip() for c in candidates if c.strip()]:
+        rx = read_int_from_ns(ns, f"/sys/class/net/{ifname}/statistics/rx_bytes")
+        tx = read_int_from_ns(ns, f"/sys/class/net/{ifname}/statistics/tx_bytes")
+        total = rx + tx
+        if total > best_bytes:
+            best = ifname
+            best_bytes = total
+    return best if best else "eth0"
 
 
 def iptables_nat_replace_dnat(ns: str, vip: str, ports: str, to_ip: str, comment: str) -> None:
@@ -191,8 +201,10 @@ def main() -> int:
 
     ap.add_argument("--primary-ns", default="dmz_web1", help="Namespace server chính. Mặc định dmz_web1")
     ap.add_argument("--primary-ip", default="172.16.200.11", help="IP DMZ server chính. Mặc định 172.16.200.11")
+    ap.add_argument("--primary-intf", default="", help="Ép interface giám sát của server chính (vd: dmz_web1-eth0). Bỏ trống để tự detect.")
     ap.add_argument("--backup-ns", default="dmz_web2", help="Namespace server dự phòng. Mặc định dmz_web2")
     ap.add_argument("--backup-ip", default="172.16.200.12", help="IP DMZ server dự phòng. Mặc định 172.16.200.12")
+    ap.add_argument("--backup-intf", default="", help="Ép interface giám sát của server dự phòng. Bỏ trống để tự detect.")
 
     ap.add_argument("--core-ns", default="core", help="Namespace router core. Mặc định core")
     ap.add_argument("--dist-ns", default="dist1", help="Namespace dist nối DMZ. Mặc định dist1")
@@ -206,11 +218,13 @@ def main() -> int:
         matplotlib.use("Agg")
     import matplotlib.pyplot as plt  # noqa: WPS433 (local import for backend)
 
-    primary_intf = detect_data_intf(args.primary_ns)
-    backup_intf = detect_data_intf(args.backup_ns)
+    primary_intf = args.primary_intf.strip() or detect_data_intf(args.primary_ns)
+    backup_intf = args.backup_intf.strip() or detect_data_intf(args.backup_ns)
 
     primary = ServerStat("primary", args.primary_ip, args.primary_ns, primary_intf)
     backup = ServerStat("backup", args.backup_ip, args.backup_ns, backup_intf)
+
+    log_event(f"Detect intf: primary_intf={primary_intf} backup_intf={backup_intf}")
 
     # CSV header
     if not CSV_PATH.exists():
