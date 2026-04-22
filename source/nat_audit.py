@@ -168,6 +168,13 @@ def enable_trace(core_ns: str, vip: str = "203.0.113.11") -> None:
     - NEW inbound từ Internet (core-out -> core-d1) tới DMZ (bắt theo dải 172.16.200.0/24)
     - NEW outbound từ Inside (10.10.0.0/16) ra core-out
     """
+    # Một số hệ thống không cấu hình backend logging cho netfilter => iptables -j LOG không ra dmesg/journal.
+    # Ta cố gắng bật nf_log_ipv4 và trỏ sysctl về backend này (không gây hại nếu đã có sẵn).
+    sh(["bash", "-lc", "modprobe nf_log_ipv4 2>/dev/null || true"])
+    netns_exec(core_ns, "modprobe nf_log_ipv4 2>/dev/null || true")
+    sh(["bash", "-lc", "sysctl -w net.netfilter.nf_log.2=nf_log_ipv4 >/dev/null 2>&1 || true"])
+    netns_exec(core_ns, "sysctl -w net.netfilter.nf_log.2=nf_log_ipv4 >/dev/null 2>&1 || true")
+
     # Insert lên đầu FORWARD để log trước khi ACCEPT/DROP
     netns_exec(
         core_ns,
@@ -197,6 +204,8 @@ def enable_trace(core_ns: str, vip: str = "203.0.113.11") -> None:
         ),
     )
 
+    # Đảm bảo dmesg hiển thị level đủ rộng (best-effort)
+    sh(["bash", "-lc", "dmesg -n 7 >/dev/null 2>&1 || true"])
     # Khuyến nghị dmesg timestamp để xuất incident có thời gian
     sh(["bash", "-lc", "dmesg -T >/dev/null 2>&1 || true"])
     # Lưu mốc thời gian để export-incident lọc đúng khoảng
