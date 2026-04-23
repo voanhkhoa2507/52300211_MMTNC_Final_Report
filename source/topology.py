@@ -646,6 +646,10 @@ def configure(net: Mininet) -> None:
     # - dmz_web1/dmz_web2: HTTP server port 80 trả về "WEB1"/"WEB2"
     # - (không bắt buộc) dns server: để sau
     info("*** Khởi động HTTP demo trên dmz_web1/dmz_web2 (port 80)...\n")
+    def _is_listen_80(h) -> bool:
+        out = h.cmd("bash -lc 'ss -ltnp 2>/dev/null | grep -q \":80\" && echo LISTEN || echo NO'")
+        return "LISTEN" in out
+
     def _start_dmz_http(ns: str, label: str) -> bool:
         h = net[ns]
         h.cmd("pkill -f 'http.server 80' 2>/dev/null || true")
@@ -655,25 +659,24 @@ def configure(net: Mininet) -> None:
             f"echo {label} > /tmp/web/index.html && "
             "dd if=/dev/zero of=/tmp/web/big.bin bs=1M count=200 >/dev/null 2>&1 || true'"
         )
-        # Ưu tiên python3 (bind IPv4 rõ ràng). Nếu không có thì fallback busybox httpd.
-        h.cmd(
-            "bash -lc 'cd /tmp/web && "
-            "echo \"[start] $(date -Iseconds)\" >/tmp/http80.log; "
-            "(command -v python3 >/dev/null 2>&1 && "
-            " echo \"[try] python3 -m http.server 80\" >>/tmp/http80.log && "
-            " nohup python3 -m http.server 80 --bind 0.0.0.0 >>/tmp/http80.log 2>&1 & echo $! >/tmp/http80.pid) "
-            "|| "
-            "(command -v python >/dev/null 2>&1 && "
-            " echo \"[try] python -m http.server 80\" >>/tmp/http80.log && "
-            " nohup python -m http.server 80 --bind 0.0.0.0 >>/tmp/http80.log 2>&1 & echo $! >/tmp/http80.pid) "
-            "|| "
-            "(command -v busybox >/dev/null 2>&1 && "
-            " echo \"[try] busybox httpd :80\" >>/tmp/http80.log && "
-            " nohup busybox httpd -f -p 0.0.0.0:80 -h /tmp/web >>/tmp/http80.log 2>&1 & echo $! >/tmp/http80.pid) "
-            "|| true'"
-        )
-        out = h.cmd("bash -lc 'sleep 0.2; ss -ltnp | grep \":80\" || true'")
-        ok = ":80" in out
+        # Start theo thứ tự ưu tiên, và chỉ dừng khi thật sự LISTEN :80
+        h.cmd("bash -lc 'echo \"[start] $(date -Iseconds)\" >/tmp/http80.log'")
+
+        for cmd, tag in [
+            ("python3 -m http.server 80 --bind 0.0.0.0", "python3"),
+            ("python -m http.server 80 --bind 0.0.0.0", "python"),
+            ("busybox httpd -f -p 0.0.0.0:80 -h /tmp/web", "busybox"),
+        ]:
+            if _is_listen_80(h):
+                break
+            h.cmd(
+                "bash -lc 'cd /tmp/web && "
+                f"echo \"[try] {tag}: {cmd}\" >>/tmp/http80.log; "
+                f"nohup {cmd} >>/tmp/http80.log 2>&1 & echo $! >/tmp/http80.pid; "
+                "sleep 0.2'"
+            )
+
+        ok = _is_listen_80(h)
         if not ok:
             info(f"*** [WARN] {ns} KHÔNG listen :80. Xem log: mininet> {ns} sh -lc \"tail -n 50 /tmp/http80.log\" \n")
         return ok
