@@ -646,51 +646,30 @@ def configure(net: Mininet) -> None:
     # - dmz_web1/dmz_web2: HTTP server port 80 trả về "WEB1"/"WEB2"
     # - (không bắt buộc) dns server: để sau
     info("*** Khởi động HTTP demo trên dmz_web1/dmz_web2 (port 80)...\n")
-    def _is_listen_80(h) -> bool:
-        out = h.cmd("bash -lc 'ss -ltnp 2>/dev/null | grep -q \":80\" && echo LISTEN || echo NO'")
-        return "LISTEN" in out
-
     def _start_dmz_http(ns: str, label: str) -> bool:
         h = net[ns]
-        h.cmd("pkill -f 'http.server 80' 2>/dev/null || true")
-        h.cmd("pkill -f 'busybox httpd.*:80' 2>/dev/null || true")
+        # Dùng đúng mẫu lệnh bạn đã test OK trong Mininet CLI:
+        # - thư mục riêng theo host
+        # - pid file để kill đúng process cũ
+        # - nohup python3 + sleep 0.5 rồi mới check LISTEN
+        webdir = f"/tmp/web_{ns}"
         h.cmd(
-            "bash -lc 'mkdir -p /tmp/web && "
-            f"echo {label} > /tmp/web/index.html && "
-            "dd if=/dev/zero of=/tmp/web/big.bin bs=1M count=200 >/dev/null 2>&1 || true'"
+            "bash -lc '"
+            f"mkdir -p {webdir}; "
+            f"echo {label} > {webdir}/index.html; "
+            f"dd if=/dev/zero of={webdir}/big.bin bs=1M count=200 >/dev/null 2>&1 || true; "
+            f"test -f {webdir}/http.pid && kill $(cat {webdir}/http.pid) 2>/dev/null || true; "
+            f"cd {webdir}; "
+            f"nohup python3 -m http.server 80 --bind 0.0.0.0 >{webdir}/http.log 2>&1 & "
+            f"echo $! > {webdir}/http.pid; "
+            "sleep 0.5; "
+            "ss -ltnp 2>/dev/null | grep \":80\" || true"
+            "'"
         )
-        # Start theo thứ tự ưu tiên, và chỉ dừng khi thật sự LISTEN :80.
-        # Lưu ý: một số môi trường không có `nohup` hoặc process background bị SIGHUP,
-        # nên ta có fallback `setsid` hoặc trap HUP.
-        h.cmd("bash -lc 'echo \"[start] $(date -Iseconds)\" >/tmp/http80.log'")
 
-        for cmd, tag in [
-            ("python3 -m http.server 80 --bind 0.0.0.0", "python3"),
-            ("python -m http.server 80 --bind 0.0.0.0", "python"),
-            ("busybox httpd -f -p 0.0.0.0:80 -h /tmp/web", "busybox"),
-        ]:
-            if _is_listen_80(h):
-                break
-            h.cmd(
-                "bash -lc 'cd /tmp/web && "
-                f"echo \"[try] {tag}: {cmd}\" >>/tmp/http80.log; "
-                "("
-                " command -v nohup >/dev/null 2>&1 && "
-                f" nohup {cmd} </dev/null >>/tmp/http80.log 2>&1 & echo $! >/tmp/http80.pid"
-                ") || ("
-                " command -v setsid >/dev/null 2>&1 && "
-                f" setsid -f {cmd} >>/tmp/http80.log 2>&1"
-                ") || ("
-                " trap \"\" HUP; "
-                f" {cmd} </dev/null >>/tmp/http80.log 2>&1 & echo $! >/tmp/http80.pid"
-                ") || true'"
-            )
-            # Đợi tối đa ~2s để service bind xong
-            h.cmd("bash -lc 'for i in $(seq 1 10); do ss -ltnp 2>/dev/null | grep -q \":80\" && exit 0; sleep 0.2; done; exit 0'")
-
-        ok = _is_listen_80(h)
+        ok = "LISTEN" in h.cmd("bash -lc 'ss -ltnp 2>/dev/null | grep -q \":80\" && echo LISTEN || echo NO'")
         if not ok:
-            info(f"*** [WARN] {ns} KHÔNG listen :80. Xem log: mininet> {ns} sh -lc \"tail -n 50 /tmp/http80.log\" \n")
+            info(f"*** [WARN] {ns} KHÔNG listen :80. Xem log: mininet> {ns} sh -lc \"tail -n 50 {webdir}/http.log\" \n")
         return ok
 
     ok_web1 = _start_dmz_http("dmz_web1", "WEB1")
