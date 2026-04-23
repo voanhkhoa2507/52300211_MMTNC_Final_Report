@@ -659,7 +659,9 @@ def configure(net: Mininet) -> None:
             f"echo {label} > /tmp/web/index.html && "
             "dd if=/dev/zero of=/tmp/web/big.bin bs=1M count=200 >/dev/null 2>&1 || true'"
         )
-        # Start theo thứ tự ưu tiên, và chỉ dừng khi thật sự LISTEN :80
+        # Start theo thứ tự ưu tiên, và chỉ dừng khi thật sự LISTEN :80.
+        # Lưu ý: một số môi trường không có `nohup` hoặc process background bị SIGHUP,
+        # nên ta có fallback `setsid` hoặc trap HUP.
         h.cmd("bash -lc 'echo \"[start] $(date -Iseconds)\" >/tmp/http80.log'")
 
         for cmd, tag in [
@@ -672,9 +674,19 @@ def configure(net: Mininet) -> None:
             h.cmd(
                 "bash -lc 'cd /tmp/web && "
                 f"echo \"[try] {tag}: {cmd}\" >>/tmp/http80.log; "
-                f"nohup {cmd} >>/tmp/http80.log 2>&1 & echo $! >/tmp/http80.pid; "
-                "sleep 0.2'"
+                "("
+                " command -v nohup >/dev/null 2>&1 && "
+                f" nohup {cmd} </dev/null >>/tmp/http80.log 2>&1 & echo $! >/tmp/http80.pid"
+                ") || ("
+                " command -v setsid >/dev/null 2>&1 && "
+                f" setsid -f {cmd} >>/tmp/http80.log 2>&1"
+                ") || ("
+                " trap \"\" HUP; "
+                f" {cmd} </dev/null >>/tmp/http80.log 2>&1 & echo $! >/tmp/http80.pid"
+                ") || true'"
             )
+            # Đợi tối đa ~2s để service bind xong
+            h.cmd("bash -lc 'for i in $(seq 1 10); do ss -ltnp 2>/dev/null | grep -q \":80\" && exit 0; sleep 0.2; done; exit 0'")
 
         ok = _is_listen_80(h)
         if not ok:
@@ -689,6 +701,7 @@ def configure(net: Mininet) -> None:
     if (not ok_web1) and ok_web2:
         vip11_dst = "172.16.200.12"
         info("*** [INFO] Failover VIP 203.0.113.11 -> dmz_web2 (172.16.200.12) vì dmz_web1 không lên.\n")
+    info(f"*** [INFO] VIP 203.0.113.11 DNAT -> {vip11_dst}\n")
 
     # Cực kỳ quan trọng: sau khi tự gán IP bằng tay, cần tạo lại ARP tĩnh (nếu dùng staticArp).
     # Nếu để autoStaticArp=True ngay từ đầu trong khi host ip=None, Mininet có thể tạo ARP sai/thiếu,
