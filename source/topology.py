@@ -646,14 +646,30 @@ def configure(net: Mininet) -> None:
     # - dmz_web1/dmz_web2: HTTP server port 80 trả về "WEB1"/"WEB2"
     # - (không bắt buộc) dns server: để sau
     info("*** Khởi động HTTP demo trên dmz_web1/dmz_web2 (port 80)...\n")
-    for n, label in [("dmz_web1", "WEB1"), ("dmz_web2", "WEB2")]:
-        net[n].cmd("pkill -f 'python3 -m http.server 80' 2>/dev/null || true")
-        net[n].cmd(
+    def _start_dmz_http(ns: str, label: str) -> None:
+        h = net[ns]
+        h.cmd("pkill -f 'http.server 80' 2>/dev/null || true")
+        h.cmd("pkill -f 'busybox httpd.*:80' 2>/dev/null || true")
+        h.cmd(
             "bash -lc 'mkdir -p /tmp/web && "
             f"echo {label} > /tmp/web/index.html && "
-            "dd if=/dev/zero of=/tmp/web/big.bin bs=1M count=200 >/dev/null 2>&1 && "
-            "cd /tmp/web && nohup python3 -m http.server 80 >/tmp/http.log 2>&1 &'"
+            "dd if=/dev/zero of=/tmp/web/big.bin bs=1M count=200 >/dev/null 2>&1 || true'"
         )
+        # Ưu tiên python3 (bind IPv4 rõ ràng). Nếu không có thì fallback busybox httpd.
+        h.cmd(
+            "bash -lc 'cd /tmp/web && "
+            "(command -v python3 >/dev/null 2>&1 && "
+            " nohup python3 -m http.server 80 --bind 0.0.0.0 >/tmp/http80.log 2>&1 & echo $! >/tmp/http80.pid) "
+            "|| "
+            "(command -v busybox >/dev/null 2>&1 && "
+            " nohup busybox httpd -f -p 0.0.0.0:80 -h /tmp/web >/tmp/http80.log 2>&1 & echo $! >/tmp/http80.pid) "
+            "|| true'"
+        )
+        # best-effort verify
+        h.cmd("bash -lc 'sleep 0.2; ss -ltnp | grep \":80\" >/dev/null && echo OK || (echo FAIL; tail -n 20 /tmp/http80.log 2>/dev/null || true)'")
+
+    for n, label in [("dmz_web1", "WEB1"), ("dmz_web2", "WEB2")]:
+        _start_dmz_http(n, label)
 
     # Cực kỳ quan trọng: sau khi tự gán IP bằng tay, cần tạo lại ARP tĩnh (nếu dùng staticArp).
     # Nếu để autoStaticArp=True ngay từ đầu trong khi host ip=None, Mininet có thể tạo ARP sai/thiếu,
