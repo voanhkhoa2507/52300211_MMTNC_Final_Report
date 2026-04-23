@@ -456,7 +456,7 @@ line vty
     return "static"
 
 
-def _setup_nat(core) -> None:
+def _setup_nat(core, vip11_dst: str = "172.16.200.11") -> None:
     """
     Cấu hình PAT + Static NAT cho DMZ trên router core bằng iptables.
     """
@@ -482,9 +482,9 @@ def _setup_nat(core) -> None:
     core.cmd("iptables -t nat -A POSTROUTING -s 10.10.0.0/16 -o core-out -j MASQUERADE")
 
     # Static NAT inbound (DNAT) từ Public IP về DMZ server
-    # Web1 203.0.113.11 -> 172.16.200.11
-    core.cmd("iptables -t nat -A PREROUTING -i core-out -p tcp -d 203.0.113.11 -m multiport --dports 80,443 -j DNAT --to-destination 172.16.200.11")
-    core.cmd("iptables -A FORWARD -i core-out -o core-d1 -p tcp -d 172.16.200.11 -m multiport --dports 80,443 -j ACCEPT")
+    # Web VIP 203.0.113.11 -> DMZ web (mặc định web1; có thể failover sang web2 nếu web1 không lên).
+    core.cmd(f"iptables -t nat -A PREROUTING -i core-out -p tcp -d 203.0.113.11 -m multiport --dports 80,443 -j DNAT --to-destination {vip11_dst}")
+    core.cmd(f"iptables -A FORWARD -i core-out -o core-d1 -p tcp -d {vip11_dst} -m multiport --dports 80,443 -j ACCEPT")
 
     # Web2 203.0.113.12 -> 172.16.200.12
     core.cmd("iptables -t nat -A PREROUTING -i core-out -p tcp -d 203.0.113.12 -m multiport --dports 80,443 -j DNAT --to-destination 172.16.200.12")
@@ -646,7 +646,7 @@ def configure(net: Mininet) -> None:
     # - dmz_web1/dmz_web2: HTTP server port 80 trả về "WEB1"/"WEB2"
     # - (không bắt buộc) dns server: để sau
     info("*** Khởi động HTTP demo trên dmz_web1/dmz_web2 (port 80)...\n")
-    def _start_dmz_http(ns: str, label: str) -> None:
+    def _start_dmz_http(ns: str, label: str) -> bool:
         h = net[ns]
         h.cmd("pkill -f 'http.server 80' 2>/dev/null || true")
         h.cmd("pkill -f 'busybox httpd.*:80' 2>/dev/null || true")
@@ -658,18 +658,34 @@ def configure(net: Mininet) -> None:
         # Ưu tiên python3 (bind IPv4 rõ ràng). Nếu không có thì fallback busybox httpd.
         h.cmd(
             "bash -lc 'cd /tmp/web && "
+            "echo \"[start] $(date -Iseconds)\" >/tmp/http80.log; "
             "(command -v python3 >/dev/null 2>&1 && "
-            " nohup python3 -m http.server 80 --bind 0.0.0.0 >/tmp/http80.log 2>&1 & echo $! >/tmp/http80.pid) "
+            " echo \"[try] python3 -m http.server 80\" >>/tmp/http80.log && "
+            " nohup python3 -m http.server 80 --bind 0.0.0.0 >>/tmp/http80.log 2>&1 & echo $! >/tmp/http80.pid) "
+            "|| "
+            "(command -v python >/dev/null 2>&1 && "
+            " echo \"[try] python -m http.server 80\" >>/tmp/http80.log && "
+            " nohup python -m http.server 80 --bind 0.0.0.0 >>/tmp/http80.log 2>&1 & echo $! >/tmp/http80.pid) "
             "|| "
             "(command -v busybox >/dev/null 2>&1 && "
-            " nohup busybox httpd -f -p 0.0.0.0:80 -h /tmp/web >/tmp/http80.log 2>&1 & echo $! >/tmp/http80.pid) "
+            " echo \"[try] busybox httpd :80\" >>/tmp/http80.log && "
+            " nohup busybox httpd -f -p 0.0.0.0:80 -h /tmp/web >>/tmp/http80.log 2>&1 & echo $! >/tmp/http80.pid) "
             "|| true'"
         )
-        # best-effort verify
-        h.cmd("bash -lc 'sleep 0.2; ss -ltnp | grep \":80\" >/dev/null && echo OK || (echo FAIL; tail -n 20 /tmp/http80.log 2>/dev/null || true)'")
+        out = h.cmd("bash -lc 'sleep 0.2; ss -ltnp | grep \":80\" || true'")
+        ok = ":80" in out
+        if not ok:
+            info(f"*** [WARN] {ns} KHÔNG listen :80. Xem log: mininet> {ns} sh -lc \"tail -n 50 /tmp/http80.log\" \n")
+        return ok
 
-    for n, label in [("dmz_web1", "WEB1"), ("dmz_web2", "WEB2")]:
-        _start_dmz_http(n, label)
+    ok_web1 = _start_dmz_http("dmz_web1", "WEB1")
+    ok_web2 = _start_dmz_http("dmz_web2", "WEB2")
+
+    # Nếu VIP 203.0.113.11 đang trỏ web1 nhưng web1 fail, tự failover sang web2 để test curl có output.
+    vip11_dst = "172.16.200.11"
+    if (not ok_web1) and ok_web2:
+        vip11_dst = "172.16.200.12"
+        info("*** [INFO] Failover VIP 203.0.113.11 -> dmz_web2 (172.16.200.12) vì dmz_web1 không lên.\n")
 
     # Cực kỳ quan trọng: sau khi tự gán IP bằng tay, cần tạo lại ARP tĩnh (nếu dùng staticArp).
     # Nếu để autoStaticArp=True ngay từ đầu trong khi host ip=None, Mininet có thể tạo ARP sai/thiếu,
@@ -684,7 +700,7 @@ def configure(net: Mininet) -> None:
 
     # NAT/PAT trên core
     info("*** Cấu hình NAT/PAT (trên core)...\n")
-    _setup_nat(core)
+    _setup_nat(core, vip11_dst=vip11_dst)
     info("*** Cấu hình NAT/PAT tối thiểu (trên core2 - dự phòng)...\n")
     _setup_nat_core2(core2)
 
