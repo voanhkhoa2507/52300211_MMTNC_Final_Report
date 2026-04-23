@@ -39,6 +39,17 @@ apply_acl() {
   done
 
   # =========================================================
+  # INTER-VLAN ROUTING (Inside <-> Inside)
+  # =========================================================
+  # Nếu không có rule này, ping khác VLAN (đặc biệt các VLAN cùng nằm trên 1 Dist)
+  # sẽ bị DROP vì policy FORWARD=DROP.
+  # Ta cho phép inside <-> inside trước, sau đó các rule deny/permit chi tiết vẫn có hiệu lực.
+  for n in dist1 dist2 core core2; do
+    NS "$n" iptables -A FORWARD -s 10.10.0.0/16 -d 10.10.0.0/16 -j ACCEPT \
+      -m comment --comment "BASE: permit inter-VLAN inside<->inside"
+  done
+
+  # =========================================================
   # STANDARD ACL (lọc theo nguồn) - theo kế hoạch đã chốt:
   # - Chặn Sales (10.10.20.0/24) truy cập DMZ (172.16.200.0/24)
   # - Áp gần đích (dist1 là nơi nối DMZ)

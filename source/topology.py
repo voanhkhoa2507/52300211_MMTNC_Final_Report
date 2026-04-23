@@ -519,6 +519,12 @@ def _setup_nat_core2(core2) -> None:
     core2.cmd("iptables -P FORWARD DROP")
     core2.cmd("iptables -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT")
 
+    # Cho phép core2 forward nội bộ giữa dist1 <-> dist2.
+    # Nếu thiếu, liên VLAN giữa nhóm VLAN nằm trên dist1 và nhóm VLAN nằm trên dist2
+    # sẽ bị drop khi đường đi chọn core2 (OSPF/ECMP/failover).
+    core2.cmd("iptables -A FORWARD -i core2-d1 -o core2-d2 -j ACCEPT")
+    core2.cmd("iptables -A FORWARD -i core2-d2 -o core2-d1 -j ACCEPT")
+
     # Allow inside from dist1/dist2 -> outside
     core2.cmd("iptables -A FORWARD -i core2-d1 -o core2-out -s 10.10.0.0/16 -j ACCEPT")
     core2.cmd("iptables -A FORWARD -i core2-d2 -o core2-out -s 10.10.0.0/16 -j ACCEPT")
@@ -636,6 +642,19 @@ def configure(net: Mininet) -> None:
     _config_host_ip(net["dmz_web2"], "172.16.200.12/24", DMZ_SUBNET.gw)
     _config_host_ip(net["dmz_dns"], "172.16.200.53/24", DMZ_SUBNET.gw)
 
+    # Khởi động dịch vụ demo trong DMZ để test VIP (Static NAT) có output rõ ràng.
+    # - dmz_web1/dmz_web2: HTTP server port 80 trả về "WEB1"/"WEB2"
+    # - (không bắt buộc) dns server: để sau
+    info("*** Khởi động HTTP demo trên dmz_web1/dmz_web2 (port 80)...\n")
+    for n, label in [("dmz_web1", "WEB1"), ("dmz_web2", "WEB2")]:
+        net[n].cmd("pkill -f 'python3 -m http.server 80' 2>/dev/null || true")
+        net[n].cmd(
+            "bash -lc 'mkdir -p /tmp/web && "
+            f"echo {label} > /tmp/web/index.html && "
+            "dd if=/dev/zero of=/tmp/web/big.bin bs=1M count=200 >/dev/null 2>&1 && "
+            "cd /tmp/web && nohup python3 -m http.server 80 >/tmp/http.log 2>&1 &'"
+        )
+
     # Cực kỳ quan trọng: sau khi tự gán IP bằng tay, cần tạo lại ARP tĩnh (nếu dùng staticArp).
     # Nếu để autoStaticArp=True ngay từ đầu trong khi host ip=None, Mininet có thể tạo ARP sai/thiếu,
     # dẫn tới ping trong cùng VLAN cũng "Destination Host Unreachable".
@@ -657,6 +676,8 @@ def configure(net: Mininet) -> None:
     info("    Ví dụ:\n")
     info("      mininet> ad_pc1 ping -c 2 203.0.113.1\n")
     info("      mininet> internet ping -c 2 203.0.113.11\n")
+    info("      mininet> internet curl -m 3 -s http://203.0.113.11/ | head -n 1   # WEB1/WEB2\n")
+    info("      mininet> core iptables -t nat -nvL PREROUTING --line-numbers | grep 203.0.113.11 -n\n")
     info("      Áp ACL  : sudo bash source/acl.sh\n")
     info("      Gỡ ACL  : sudo bash source/acl.sh dropacl\n")
 
