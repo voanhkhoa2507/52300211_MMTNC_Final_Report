@@ -642,45 +642,9 @@ def configure(net: Mininet) -> None:
     _config_host_ip(net["dmz_web2"], "172.16.200.12/24", DMZ_SUBNET.gw)
     _config_host_ip(net["dmz_dns"], "172.16.200.53/24", DMZ_SUBNET.gw)
 
-    # Khởi động dịch vụ demo trong DMZ để test VIP (Static NAT) có output rõ ràng.
-    # - dmz_web1/dmz_web2: HTTP server port 80 trả về "WEB1"/"WEB2"
-    # - (không bắt buộc) dns server: để sau
-    info("*** Khởi động HTTP demo trên dmz_web1/dmz_web2 (port 80)...\n")
-    def _start_dmz_http(ns: str, label: str) -> bool:
-        h = net[ns]
-        # Dùng đúng mẫu lệnh bạn đã test OK trong Mininet CLI:
-        # - thư mục riêng theo host
-        # - pid file để kill đúng process cũ
-        # - nohup python3 + sleep 0.5 rồi mới check LISTEN
-        webdir = f"/tmp/web_{ns}"
-        h.cmd(
-            "bash -lc '"
-            f"mkdir -p {webdir}; "
-            f"echo {label} > {webdir}/index.html; "
-            f"dd if=/dev/zero of={webdir}/big.bin bs=1M count=200 >/dev/null 2>&1 || true; "
-            f"test -f {webdir}/http.pid && kill $(cat {webdir}/http.pid) 2>/dev/null || true; "
-            f"cd {webdir}; "
-            f"nohup python3 -m http.server 80 --bind 0.0.0.0 >{webdir}/http.log 2>&1 & "
-            f"echo $! > {webdir}/http.pid; "
-            "sleep 0.5; "
-            "ss -ltnp 2>/dev/null | grep \":80\" || true"
-            "'"
-        )
-
-        ok = "LISTEN" in h.cmd("bash -lc 'ss -ltnp 2>/dev/null | grep -q \":80\" && echo LISTEN || echo NO'")
-        if not ok:
-            info(f"*** [WARN] {ns} KHÔNG listen :80. Xem log: mininet> {ns} sh -lc \"tail -n 50 {webdir}/http.log\" \n")
-        return ok
-
-    ok_web1 = _start_dmz_http("dmz_web1", "WEB1")
-    ok_web2 = _start_dmz_http("dmz_web2", "WEB2")
-
-    # Nếu VIP 203.0.113.11 đang trỏ web1 nhưng web1 fail, tự failover sang web2 để test curl có output.
+    # KHÔNG tự khởi động HTTP server trong topology nữa.
+    # Bạn sẽ tự start/stop và theo dõi log để demo VIP/Load Balancing chủ động.
     vip11_dst = "172.16.200.11"
-    if (not ok_web1) and ok_web2:
-        vip11_dst = "172.16.200.12"
-        info("*** [INFO] Failover VIP 203.0.113.11 -> dmz_web2 (172.16.200.12) vì dmz_web1 không lên.\n")
-    info(f"*** [INFO] VIP 203.0.113.11 DNAT -> {vip11_dst}\n")
 
     # Cực kỳ quan trọng: sau khi tự gán IP bằng tay, cần tạo lại ARP tĩnh (nếu dùng staticArp).
     # Nếu để autoStaticArp=True ngay từ đầu trong khi host ip=None, Mininet có thể tạo ARP sai/thiếu,
@@ -703,6 +667,7 @@ def configure(net: Mininet) -> None:
     info("    Ví dụ:\n")
     info("      mininet> ad_pc1 ping -c 2 203.0.113.1\n")
     info("      mininet> internet ping -c 2 203.0.113.11\n")
+    info("      (Tự start web DMZ) dmz_web1/dmz_web2: python3 -m http.server 80 ...\n")
     info("      mininet> internet curl -m 3 -s http://203.0.113.11/ | head -n 1   # WEB1/WEB2\n")
     info("      mininet> core iptables -t nat -nvL PREROUTING --line-numbers | grep 203.0.113.11 -n\n")
     info("      Áp ACL  : sudo bash source/acl.sh\n")

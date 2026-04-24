@@ -327,6 +327,10 @@ def main() -> int:
         autoscale_every = 8  # tránh autoscale mỗi frame (rất chậm)
         frame = 0
 
+        # Ngưỡng tính theo Mbps (tránh lỗi so sánh % với số 80.0, và lỗi biên: đúng 80% bị bỏ qua nếu dùng p_load > 80)
+        failover_mbps = max(0.0, (args.failover / 100.0) * args.capacity_mbps)
+        restore_mbps = max(0.0, (args.restore / 100.0) * args.capacity_mbps)
+
         while True:
             loop_ts = time.time()
             p_mbps = primary.sample_mbps_tx()
@@ -336,10 +340,16 @@ def main() -> int:
 
             # Threshold logic:
             # - Nếu đang primary và primary vượt failover -> chuyển backup
-            # - Nếu đang backup và backup xuống dưới restore -> trả primary
-            if active == "primary" and p_load > args.failover:
+            # - Nếu đang backup và backup xuống dưới ngưỡng restore (Mbps) -> trả primary
+            if active == "primary" and p_mbps >= failover_mbps:
+                log_event(
+                    f"Kích hoạt failover: primary_tx={p_mbps:.1f}Mbps (>{failover_mbps:.1f} = {args.failover}% of {args.capacity_mbps}Mbps)"
+                )
                 apply_redirect(args.backup_ip, "backup")
-            elif active == "backup" and b_load < args.restore:
+            elif active == "backup" and b_mbps < restore_mbps:
+                log_event(
+                    f"Khôi phục primary: backup_tx={b_mbps:.1f}Mbps (<{restore_mbps:.1f} = {args.restore}% of {args.capacity_mbps}Mbps)"
+                )
                 apply_redirect(args.primary_ip, "primary")
 
             # Append CSV (theo interval để file không phình quá nhanh nếu plot-interval nhỏ)
