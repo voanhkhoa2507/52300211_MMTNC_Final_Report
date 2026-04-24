@@ -331,12 +331,23 @@ def main() -> int:
         failover_mbps = max(0.0, (args.failover / 100.0) * args.capacity_mbps)
         restore_mbps = max(0.0, (args.restore / 100.0) * args.capacity_mbps)
 
+        # Tách vòng lặp vẽ (plot-interval) và vòng lặp lấy mẫu (interval)
+        # - plot-interval: mượt UI
+        # - interval: tốc độ cập nhật số đo Mbps/logic failover
+        next_sample_ts = time.time()
+        p_mbps = 0.0
+        b_mbps = 0.0
+        p_load = 0.0
+        b_load = 0.0
+
         while True:
             loop_ts = time.time()
-            p_mbps = primary.sample_mbps_tx()
-            b_mbps = backup.sample_mbps_tx()
-            p_load = (p_mbps / args.capacity_mbps) * 100.0 if args.capacity_mbps > 0 else 0.0
-            b_load = (b_mbps / args.capacity_mbps) * 100.0 if args.capacity_mbps > 0 else 0.0
+            if loop_ts >= next_sample_ts:
+                p_mbps = primary.sample_mbps_tx()
+                b_mbps = backup.sample_mbps_tx()
+                p_load = (p_mbps / args.capacity_mbps) * 100.0 if args.capacity_mbps > 0 else 0.0
+                b_load = (b_mbps / args.capacity_mbps) * 100.0 if args.capacity_mbps > 0 else 0.0
+                next_sample_ts = loop_ts + max(0.01, args.interval)
 
             # Threshold logic:
             # - Nếu đang primary và primary vượt failover -> chuyển backup
@@ -394,7 +405,7 @@ def main() -> int:
                 fig.savefig(PNG_PATH, dpi=140)
                 last_save_ts = loop_ts
 
-            time.sleep(max(0.01, args.interval))
+            time.sleep(max(0.01, args.plot_interval))
     except KeyboardInterrupt:
         log_event("Stop LB: KeyboardInterrupt")
         return 0
