@@ -208,6 +208,13 @@ def main() -> int:
         default=0.0,
         help="(Tuỳ chọn) Ngưỡng restore tuyệt đối (Mbps) cho backup. Nếu > 0 thì ghi đè restore%% × capacity.",
     )
+    ap.add_argument(
+        "--restore-hold-sec",
+        type=float,
+        default=5.0,
+        help="Sau khi failover sang backup, chờ tối thiểu bấy nhiêu giây mới được phép restore về primary. "
+        "Tránh lỗi: vừa DNAT sang web2 nhưng b_mbps vẫn 0 (kết nối cũ + chưa kịp mẫu) nên restore ngay lập tức.",
+    )
 
     ap.add_argument("--vip", default="203.0.113.11", help="VIP public cho web service (Static NAT). Mặc định 203.0.113.11")
     ap.add_argument("--ports", default="80,443", help="Các port web cần điều hướng. Mặc định 80,443")
@@ -370,6 +377,7 @@ def main() -> int:
         b_mbps = 0.0
         p_load = 0.0
         b_load = 0.0
+        backup_since_ts = 0.0  # thời điểm chuyển sang backup (0 = đang primary)
 
         while True:
             loop_ts = time.time()
@@ -383,12 +391,20 @@ def main() -> int:
             # Threshold logic:
             # - Nếu đang primary và primary vượt failover -> chuyển backup
             # - Nếu đang backup và backup xuống dưới ngưỡng restore (Mbps) -> trả primary
+            #   (có restore-hold-sec để không restore ngay khi b_mbps=0 vài chu kỳ đầu sau failover)
             if active == "primary" and p_mbps >= failover_mbps:
                 log_event(f"Kích hoạt failover: primary_tx={p_mbps:.1f}Mbps (ngưỡng >= {failover_mbps:.1f}Mbps)")
                 apply_redirect(args.backup_ip, "backup")
-            elif active == "backup" and b_mbps < restore_mbps:
+                backup_since_ts = loop_ts
+            elif (
+                active == "backup"
+                and b_mbps < restore_mbps
+                and backup_since_ts > 0.0
+                and (loop_ts - backup_since_ts) >= max(0.0, args.restore_hold_sec)
+            ):
                 log_event(f"Khôi phục primary: backup_tx={b_mbps:.1f}Mbps (ngưỡng < {restore_mbps:.1f}Mbps)")
                 apply_redirect(args.primary_ip, "primary")
+                backup_since_ts = 0.0
 
             # Append CSV (theo interval để file không phình quá nhanh nếu plot-interval nhỏ)
             if (loop_ts - last_csv_ts) >= max(0.1, args.interval):
