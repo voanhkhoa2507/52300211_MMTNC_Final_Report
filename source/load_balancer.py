@@ -247,6 +247,23 @@ def main() -> int:
     ap.add_argument("--core-ns", default="core", help="Namespace router core. Mặc định core")
     ap.add_argument("--dist-ns", default="dist1", help="Namespace dist nối DMZ. Mặc định dist1")
     ap.add_argument("--also-redirect-inside", action="store_true", help="Ngoài VIP, redirect cả inside -> dmz_web1 (172.16.200.11) sang web2 khi failover")
+    ap.add_argument(
+        "--probe-ns",
+        default="internet",
+        help="Tên network namespace (symlink /var/run/netns) để bắn traffic kiểm tra sau failover. Mặc định internet.",
+    )
+    ap.add_argument(
+        "--post-failover-probe",
+        type=int,
+        default=8,
+        help="Sau khi DNAT sang backup: tự chạy nền N lần curl big.bin lệch ~0.35s từ probe-ns (0=tắt). "
+        "Giúp đường cam có byte với python -m http.server đơn luồng mà không cần nhiều curl tay.",
+    )
+    ap.add_argument(
+        "--probe-path",
+        default="/big.bin",
+        help="Đường dẫn HTTP trên VIP cho probe (mặc định /big.bin).",
+    )
 
     args = ap.parse_args()
 
@@ -379,6 +396,29 @@ def main() -> int:
 
         active = target_label
         log_event(f"Chuyển hướng VIP {args.vip}:{args.ports} -> {to_ip} (active={active})")
+
+        # Sau failover: tạo vài kết nối MỚI tới VIP (lệch thời gian) để backup có traffic đo được.
+        # http.server đơn luồng: bão nhiều curl cùng lúc dễ timeout; probe nhỏ + sleep giữa các curl ổn hơn.
+        if target_label == "backup" and args.post_failover_probe > 0:
+            n = args.post_failover_probe
+            path = args.probe_path.lstrip("/")
+            inner = (
+                f"for i in $(seq 1 {n}); do "
+                f"curl -m 30 -s http://{args.vip}/{path} -o /dev/null & "
+                f"sleep 0.35; done; wait"
+            )
+            try:
+                subprocess.Popen(
+                    ["ip", "netns", "exec", args.probe_ns, "bash", "-lc", inner],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+                log_event(
+                    f"Probe sau failover: {n} curl http://{args.vip}/{path} (nền, netns={args.probe_ns})"
+                )
+            except Exception as exc:
+                log_event(f"[WARN] Không chạy được probe (ip netns exec {args.probe_ns}): {exc}")
 
     # Set initial to primary
     apply_redirect(args.primary_ip, "primary")
