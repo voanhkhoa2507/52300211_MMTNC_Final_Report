@@ -230,8 +230,8 @@ def main() -> int:
         "--restore-hold-sec",
         type=float,
         default=5.0,
-        help="Sau khi failover sang backup, chờ tối thiểu bấy nhiêu giây mới được phép restore về primary. "
-        "Tránh lỗi: vừa DNAT sang web2 nhưng b_mbps vẫn 0 (kết nối cũ + chưa kịp mẫu) nên restore ngay lập tức.",
+        help="Sau khi failover sang backup, chờ tối thiểu bấy nhiêu giây mới xét restore. "
+        "Restore chỉ xảy ra khi primary_rxtx và backup_rxtx đều < ngưỡng restore (sau hold).",
     )
 
     ap.add_argument("--vip", default="203.0.113.11", help="VIP public cho web service (Static NAT). Mặc định 203.0.113.11")
@@ -420,9 +420,11 @@ def main() -> int:
                 next_sample_ts = loop_ts + max(0.01, args.interval)
 
             # Threshold logic:
-            # - Nếu đang primary và primary vượt failover -> chuyển backup
-            # - Nếu đang backup và backup xuống dưới ngưỡng restore (Mbps) -> trả primary
-            #   (có restore-hold-sec để không restore ngay khi b_mbps=0 vài chu kỳ đầu sau failover)
+            # - Primary vượt failover -> DNAT sang backup
+            # - Restore về primary: PHẢI có cả primary lẫn backup đều dưới ngưỡng restore (sau hold).
+            #   Tránh lỗi phổ biến: vừa failover xong b_mbps=0 (chưa có kết nối mới tới web2) nhưng
+            #   p_mbps vẫn cao (kết nối cũ trên web1) — nếu chỉ xét b_mbps < restore thì sẽ restore
+            #   ngay => DNAT về .11 => curl chỉ thấy WEB1, đường cam mãi 0.
             if active == "primary" and p_mbps >= failover_mbps:
                 log_event(f"Kích hoạt failover: primary_rxtx={p_mbps:.1f}Mbps (ngưỡng >= {failover_mbps:.1f}Mbps)")
                 apply_redirect(args.backup_ip, "backup")
@@ -433,11 +435,15 @@ def main() -> int:
                 )
             elif (
                 active == "backup"
-                and b_mbps < restore_mbps
                 and backup_since_ts > 0.0
                 and (loop_ts - backup_since_ts) >= max(0.0, args.restore_hold_sec)
+                and p_mbps < restore_mbps
+                and b_mbps < restore_mbps
             ):
-                log_event(f"Khôi phục primary: backup_rxtx={b_mbps:.1f}Mbps (ngưỡng < {restore_mbps:.1f}Mbps)")
+                log_event(
+                    f"Khôi phục primary: primary_rxtx={p_mbps:.1f} backup_rxtx={b_mbps:.1f} "
+                    f"(cả hai < {restore_mbps:.1f}Mbps)"
+                )
                 apply_redirect(args.primary_ip, "primary")
                 backup_since_ts = 0.0
 
