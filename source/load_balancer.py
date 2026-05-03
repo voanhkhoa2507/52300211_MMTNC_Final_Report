@@ -61,6 +61,21 @@ def read_int_from_ns(ns: str, path: str) -> int:
         return 0
 
 
+def detect_intf_with_ip(ns: str, ip: str) -> str:
+    """
+    Tìm tên interface trong namespace đang gán IPv4 == ip (ưu tiên hơn default route cho host DMZ).
+    """
+    raw = netns_exec(ns, "ip -o -4 addr show 2>/dev/null || true")
+    token = f" {ip}/"
+    for line in raw.splitlines():
+        if token not in line:
+            continue
+        parts = line.split()
+        if len(parts) >= 2:
+            return parts[1]  # ifname
+    return ""
+
+
 def detect_data_intf(ns: str) -> str:
     """
     Tự tìm interface "data" trong namespace:
@@ -150,20 +165,23 @@ class ServerStat:
     ip: str
     ns: str
     intf: str
-    last_tx: int = 0
+    last_bytes: int = 0
     last_ts: float = 0.0
 
-    def sample_mbps_tx(self) -> float:
+    def sample_mbps_total(self) -> float:
+        """Mbps từ (rx_bytes + tx_bytes): phản ánh cả chiều vào/ra trên interface DMZ."""
         now = time.time()
+        rx = read_int_from_ns(self.ns, f"/sys/class/net/{self.intf}/statistics/rx_bytes")
         tx = read_int_from_ns(self.ns, f"/sys/class/net/{self.intf}/statistics/tx_bytes")
+        tot = rx + tx
         if self.last_ts == 0.0:
             self.last_ts = now
-            self.last_tx = tx
+            self.last_bytes = tot
             return 0.0
         dt = max(0.001, now - self.last_ts)
-        mbps = ((tx - self.last_tx) * 8.0) / dt / 1_000_000.0
+        mbps = ((tot - self.last_bytes) * 8.0) / dt / 1_000_000.0
         self.last_ts = now
-        self.last_tx = tx
+        self.last_bytes = tot
         return max(0.0, mbps)
 
 
@@ -238,8 +256,16 @@ def main() -> int:
         matplotlib.use("Agg")
     import matplotlib.pyplot as plt  # noqa: WPS433 (local import for backend)
 
-    primary_intf = args.primary_intf.strip() or detect_data_intf(args.primary_ns)
-    backup_intf = args.backup_intf.strip() or detect_data_intf(args.backup_ns)
+    primary_intf = (
+        args.primary_intf.strip()
+        or detect_intf_with_ip(args.primary_ns, args.primary_ip)
+        or detect_data_intf(args.primary_ns)
+    )
+    backup_intf = (
+        args.backup_intf.strip()
+        or detect_intf_with_ip(args.backup_ns, args.backup_ip)
+        or detect_data_intf(args.backup_ns)
+    )
 
     primary = ServerStat("primary", args.primary_ip, args.primary_ns, primary_intf)
     backup = ServerStat("backup", args.backup_ip, args.backup_ns, backup_intf)
@@ -257,7 +283,7 @@ def main() -> int:
     fig, ax = plt.subplots(figsize=(10, 5))
     ax.set_title("Load Balancing DMZ Web (Mbps theo thời gian)")
     ax.set_xlabel("Thời gian (s)")
-    ax.set_ylabel("Mbps (TX)")
+    ax.set_ylabel("Mbps (RX+TX)")
     ax.grid(True, linestyle="--", alpha=0.4)
     fig.tight_layout()
 
@@ -387,8 +413,8 @@ def main() -> int:
         while True:
             loop_ts = time.time()
             if loop_ts >= next_sample_ts:
-                p_mbps = primary.sample_mbps_tx()
-                b_mbps = backup.sample_mbps_tx()
+                p_mbps = primary.sample_mbps_total()
+                b_mbps = backup.sample_mbps_total()
                 p_load = (p_mbps / args.capacity_mbps) * 100.0 if args.capacity_mbps > 0 else 0.0
                 b_load = (b_mbps / args.capacity_mbps) * 100.0 if args.capacity_mbps > 0 else 0.0
                 next_sample_ts = loop_ts + max(0.01, args.interval)
@@ -398,16 +424,20 @@ def main() -> int:
             # - Nếu đang backup và backup xuống dưới ngưỡng restore (Mbps) -> trả primary
             #   (có restore-hold-sec để không restore ngay khi b_mbps=0 vài chu kỳ đầu sau failover)
             if active == "primary" and p_mbps >= failover_mbps:
-                log_event(f"Kích hoạt failover: primary_tx={p_mbps:.1f}Mbps (ngưỡng >= {failover_mbps:.1f}Mbps)")
+                log_event(f"Kích hoạt failover: primary_rxtx={p_mbps:.1f}Mbps (ngưỡng >= {failover_mbps:.1f}Mbps)")
                 apply_redirect(args.backup_ip, "backup")
                 backup_since_ts = loop_ts
+                log_event(
+                    "Gợi ý: DNAT chỉ áp dụng cho kết nối MỚI. Chạy thêm đợt curl/big.bin sau failover "
+                    "để thấy đường backup; các tải cũ tới .11 vẫn kết thúc trên primary."
+                )
             elif (
                 active == "backup"
                 and b_mbps < restore_mbps
                 and backup_since_ts > 0.0
                 and (loop_ts - backup_since_ts) >= max(0.0, args.restore_hold_sec)
             ):
-                log_event(f"Khôi phục primary: backup_tx={b_mbps:.1f}Mbps (ngưỡng < {restore_mbps:.1f}Mbps)")
+                log_event(f"Khôi phục primary: backup_rxtx={b_mbps:.1f}Mbps (ngưỡng < {restore_mbps:.1f}Mbps)")
                 apply_redirect(args.primary_ip, "primary")
                 backup_since_ts = 0.0
 
