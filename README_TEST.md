@@ -1,4 +1,4 @@
-## Checklist chạy/test & sinh output (1 lần chạy ra hết)
+## Checklist chạy/test & sinh output 
 
 ### 0) Cài gói cần thiết (Ubuntu)
 
@@ -219,7 +219,7 @@ sudo python3 source/perf_benchmark.py --fail-soft --render-table --no-csv --repe
 - **Output**:
   - `logs/perf/perf_table.png`
 
-### I) One-shot generate (khuyến nghị để nộp)
+### I) One-shot generate 
 - **Yêu cầu**: 1 lệnh sinh gần như toàn bộ output.
 - **Lệnh**:
 

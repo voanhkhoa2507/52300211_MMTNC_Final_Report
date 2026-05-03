@@ -50,7 +50,7 @@ apply_acl() {
   done
 
   # =========================================================
-  # STANDARD ACL (lọc theo nguồn) - theo kế hoạch đã chốt:
+  # STANDARD ACL (lọc theo nguồn) 
   # - Chặn Sales (10.10.20.0/24) truy cập DMZ (172.16.200.0/24)
   # - Áp gần đích (dist1 là nơi nối DMZ)
   # =========================================================

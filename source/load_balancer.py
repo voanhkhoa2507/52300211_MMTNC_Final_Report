@@ -195,6 +195,19 @@ def main() -> int:
     ap.add_argument("--capacity-mbps", type=float, default=100.0, help="Dung lượng giả lập để quy đổi %% tải. Mặc định 100 Mbps")
     ap.add_argument("--failover", type=float, default=80.0, help="Ngưỡng %% kích hoạt failover. Mặc định 80")
     ap.add_argument("--restore", type=float, default=20.0, help="Ngưỡng %% khôi phục. Mặc định 20")
+    ap.add_argument(
+        "--failover-mbps",
+        type=float,
+        default=0.0,
+        help="(Tuỳ chọn) Ngưỡng failover tuyệt đối (Mbps). Nếu > 0 thì ghi đè công thức failover%% × capacity. "
+        "Dùng khi VM không tạo được đủ tải để vượt 80%% của capacity lớn (vd 2000Mbps).",
+    )
+    ap.add_argument(
+        "--restore-mbps",
+        type=float,
+        default=0.0,
+        help="(Tuỳ chọn) Ngưỡng restore tuyệt đối (Mbps) cho backup. Nếu > 0 thì ghi đè restore%% × capacity.",
+    )
 
     ap.add_argument("--vip", default="203.0.113.11", help="VIP public cho web service (Static NAT). Mặc định 203.0.113.11")
     ap.add_argument("--ports", default="80,443", help="Các port web cần điều hướng. Mặc định 80,443")
@@ -246,10 +259,27 @@ def main() -> int:
     y1: list[float] = []
     y2: list[float] = []
 
+    failover_line_mbps = (
+        args.failover_mbps
+        if args.failover_mbps > 0
+        else max(0.0, (args.failover / 100.0) * args.capacity_mbps)
+    )
+    restore_line_mbps = (
+        args.restore_mbps
+        if args.restore_mbps > 0
+        else max(0.0, (args.restore / 100.0) * args.capacity_mbps)
+    )
+
     (l1,) = ax.plot([], [], label=f"Primary {args.primary_ip}", linewidth=2)
     (l2,) = ax.plot([], [], label=f"Backup  {args.backup_ip}", linewidth=2)
-    ax.axhline(args.capacity_mbps * (args.failover / 100.0), linestyle=":", linewidth=1.5, label=f"Failover {args.failover}%")
-    ax.axhline(args.capacity_mbps * (args.restore / 100.0), linestyle="--", linewidth=1.5, label=f"Restore {args.restore}%")
+    if args.failover_mbps > 0:
+        ax.axhline(failover_line_mbps, linestyle=":", linewidth=1.5, label=f"Failover {failover_line_mbps:.0f} Mbps (abs)")
+    else:
+        ax.axhline(failover_line_mbps, linestyle=":", linewidth=1.5, label=f"Failover {args.failover}%")
+    if args.restore_mbps > 0:
+        ax.axhline(restore_line_mbps, linestyle="--", linewidth=1.5, label=f"Restore {restore_line_mbps:.0f} Mbps (abs)")
+    else:
+        ax.axhline(restore_line_mbps, linestyle="--", linewidth=1.5, label=f"Restore {args.restore}%")
     ax.legend(loc="upper right")
 
     # State
@@ -316,7 +346,8 @@ def main() -> int:
     apply_redirect(args.primary_ip, "primary")
 
     log_event(
-        f"Start LB: interval={args.interval}s capacity={args.capacity_mbps}Mbps failover={args.failover}% restore={args.restore}% "
+        f"Start LB: interval={args.interval}s capacity={args.capacity_mbps}Mbps "
+        f"failover_line={failover_line_mbps:.1f}Mbps restore_line={restore_line_mbps:.1f}Mbps "
         f"primary={args.primary_ns}({args.primary_ip}) backup={args.backup_ns}({args.backup_ip})"
     )
 
@@ -327,9 +358,9 @@ def main() -> int:
         autoscale_every = 8  # tránh autoscale mỗi frame (rất chậm)
         frame = 0
 
-        # Ngưỡng tính theo Mbps (tránh lỗi so sánh % với số 80.0, và lỗi biên: đúng 80% bị bỏ qua nếu dùng p_load > 80)
-        failover_mbps = max(0.0, (args.failover / 100.0) * args.capacity_mbps)
-        restore_mbps = max(0.0, (args.restore / 100.0) * args.capacity_mbps)
+        # Ngưỡng Mbps: ưu tiên --failover-mbps / --restore-mbps nếu có
+        failover_mbps = failover_line_mbps
+        restore_mbps = restore_line_mbps
 
         # Tách vòng lặp vẽ (plot-interval) và vòng lặp lấy mẫu (interval)
         # - plot-interval: mượt UI
@@ -353,14 +384,10 @@ def main() -> int:
             # - Nếu đang primary và primary vượt failover -> chuyển backup
             # - Nếu đang backup và backup xuống dưới ngưỡng restore (Mbps) -> trả primary
             if active == "primary" and p_mbps >= failover_mbps:
-                log_event(
-                    f"Kích hoạt failover: primary_tx={p_mbps:.1f}Mbps (>{failover_mbps:.1f} = {args.failover}% of {args.capacity_mbps}Mbps)"
-                )
+                log_event(f"Kích hoạt failover: primary_tx={p_mbps:.1f}Mbps (ngưỡng >= {failover_mbps:.1f}Mbps)")
                 apply_redirect(args.backup_ip, "backup")
             elif active == "backup" and b_mbps < restore_mbps:
-                log_event(
-                    f"Khôi phục primary: backup_tx={b_mbps:.1f}Mbps (<{restore_mbps:.1f} = {args.restore}% of {args.capacity_mbps}Mbps)"
-                )
+                log_event(f"Khôi phục primary: backup_tx={b_mbps:.1f}Mbps (ngưỡng < {restore_mbps:.1f}Mbps)")
                 apply_redirect(args.primary_ip, "primary")
 
             # Append CSV (theo interval để file không phình quá nhanh nếu plot-interval nhỏ)

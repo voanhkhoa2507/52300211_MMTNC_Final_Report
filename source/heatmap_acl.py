@@ -4,13 +4,9 @@ Sinh heatmap ACL (multi-layer) từ các rule trong source/acl.sh.
 
 Mục tiêu:
 - Tạo 1 hình heatmap dễ đưa vào báo cáo: cho phép/chặn theo từng "luồng" (source zone -> dịch vụ/đích).
-- Xuất kèm bảng CSV để làm minh chứng.
 
-Lưu ý:
 - Script này KHÔNG đọc iptables live để tránh phụ thuộc vào trạng thái runtime.
-- Nó đọc/diễn giải policy theo đúng thiết kế của acl.sh (STD/EXT/FW).
 
-Chế độ live:
 - Có thể đọc trực tiếp `iptables -S FORWARD` trong namespace (core/dist1),
   rồi mô phỏng quyết định ALLOW/DENY theo đúng thứ tự rule + default policy.
 """
