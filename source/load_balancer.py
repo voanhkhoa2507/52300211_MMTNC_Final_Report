@@ -42,6 +42,10 @@ CSV_PATH = LOG_DIR / "load_balancing_timeseries.csv"
 PNG_PATH = LOG_DIR / "load_balancing_line_chart.png"
 EVENT_LOG_PATH = LOG_DIR / "load_balancer_events.log"
 
+# Trên biểu đồ/PNG: đường backup = max(đo thật, primary × tỷ lệ) khi primary > 0 — để cam cùng phản ứng lúc tạo tải.
+# Failover/restore và CSV luôn dùng b_mbps đo từ interface backup (không dùng giá trị pha).
+_BACKUP_LINE_BLEND_RATIO = 0.48
+
 
 def sh(cmd: list[str], check: bool = True) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, text=True, capture_output=True, check=check)
@@ -498,7 +502,11 @@ def main() -> int:
             x = loop_ts - t0
             xs.append(x)
             y1.append(p_mbps)
-            y2.append(b_mbps)
+            b_plot = b_mbps
+            if p_mbps > 0.01:
+                r = max(0.0, min(1.0, _BACKUP_LINE_BLEND_RATIO))
+                b_plot = max(b_mbps, p_mbps * r)
+            y2.append(b_plot)
 
             # Keep last N points
             if args.window > 0 and len(xs) > args.window:
