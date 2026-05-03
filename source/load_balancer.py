@@ -109,16 +109,16 @@ def iptables_nat_replace_dnat(ns: str, vip: str, ports: str, to_ip: str, comment
         del_line = l.replace("-A", "-D", 1)
         netns_exec(ns, f"iptables -t nat {del_line} 2>/dev/null || true")
 
-    # Add new DNAT (insert lên đầu để chắc chắn match trước)
-    netns_exec(
-        ns,
-        (
-            "iptables -t nat -I PREROUTING 1 "
-            f"-p tcp -d {vip} -m multiport --dports {ports} "
-            f"-j DNAT --to-destination {to_ip} "
-            f"-m comment --comment \"{comment}\""
-        ),
+    # Add new DNAT (insert lên đầu). Comment phải đứng TRƯỚC -j DNAT (một số bản iptables từ chối -m comment sau target).
+    add_cmd = (
+        "iptables -t nat -I PREROUTING 1 "
+        f"-p tcp -d {vip} -m multiport --dports {ports} "
+        f"-m comment --comment \"{comment}\" "
+        f"-j DNAT --to-destination {to_ip}"
     )
+    out = netns_exec(ns, f"{add_cmd} 2>&1; echo __RC:$?")
+    if not out.rstrip().endswith("__RC:0"):
+        log_event(f"Lỗi iptables DNAT insert trong {ns}: {out.strip()}")
 
 
 def iptables_filter_ensure_forward_accept(ns: str, in_if: str, out_if: str, dst_ip: str, ports: str, comment: str) -> None:
@@ -129,7 +129,7 @@ def iptables_filter_ensure_forward_accept(ns: str, in_if: str, out_if: str, dst_
     check_cmd = (
         "iptables -C FORWARD "
         f"-i {in_if} -o {out_if} -p tcp -d {dst_ip} -m multiport --dports {ports} "
-        f"-j ACCEPT -m comment --comment \"{comment}\""
+        f"-m comment --comment \"{comment}\" -j ACCEPT"
     )
     ok = netns_exec(ns, f"{check_cmd} 2>/dev/null; echo $?").strip().endswith("0")
     if ok:
@@ -310,6 +310,11 @@ def main() -> int:
             dst_ip=to_ip,
             ports=args.ports,
             comment="LB:ALLOW_VIP_TO_DMZ",
+        )
+        # Giúp kết nối mới bám DNAT mới (tránh state cũ kẹt sau khi đổi VIP)
+        netns_exec(
+            args.core_ns,
+            f"command -v conntrack >/dev/null 2>&1 && conntrack -D -d {args.vip} 2>/dev/null || true",
         )
 
         # Optional: inside redirect at dist1 (inside -> dmz_web1)
