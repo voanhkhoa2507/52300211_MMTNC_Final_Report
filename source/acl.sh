@@ -39,17 +39,6 @@ apply_acl() {
   done
 
   # =========================================================
-  # INTER-VLAN ROUTING (Inside <-> Inside)
-  # =========================================================
-  # Nếu không có rule này, ping khác VLAN (đặc biệt các VLAN cùng nằm trên 1 Dist)
-  # sẽ bị DROP vì policy FORWARD=DROP.
-  # Ta cho phép inside <-> inside trước, sau đó các rule deny/permit chi tiết vẫn có hiệu lực.
-  for n in dist1 dist2 core core2; do
-    NS "$n" iptables -A FORWARD -s 10.10.0.0/16 -d 10.10.0.0/16 -j ACCEPT \
-      -m comment --comment "BASE: permit inter-VLAN inside<->inside"
-  done
-
-  # =========================================================
   # STANDARD ACL (lọc theo nguồn)
   #
   # Ghi chú "tính thực tế":
@@ -59,7 +48,24 @@ apply_acl() {
   # - Standard ACL sẽ được thể hiện ở các chương/biểu đồ khác (nếu cần), còn phần DMZ
   #   dùng Extended ACL theo dịch vụ (80/443, 53) để minh hoạ chính sách thực tế hơn.
   # =========================================================
-  echo "[ACL] Standard ACL: (đã bỏ chặn Sales -> DMZ để hợp lý thực tế)"
+  echo "[ACL] Standard ACL: chặn Sales (VLAN20) -> Finance/HR (VLAN nhạy cảm)"
+  # Chặn theo nguồn: Sales không được truy cập các mạng nhạy cảm (Finance/HR).
+  # Áp trên dist1 vì Sales/Finance/HR đều nằm ở nhánh dist1 trong topo hiện tại.
+  NS dist1 iptables -A FORWARD -s 10.10.20.0/24 -d 10.10.50.0/24 -j DROP \
+    -m comment --comment "STD: Deny Sales VLAN20 -> Finance VLAN50"
+  NS dist1 iptables -A FORWARD -s 10.10.20.0/24 -d 10.10.60.0/24 -j DROP \
+    -m comment --comment "STD: Deny Sales VLAN20 -> HR VLAN60"
+
+  # =========================================================
+  # INTER-VLAN ROUTING (Inside <-> Inside)
+  # =========================================================
+  # Nếu không có rule này, ping khác VLAN (đặc biệt các VLAN cùng nằm trên 1 Dist)
+  # sẽ bị DROP vì policy FORWARD=DROP.
+  # QUAN TRỌNG: đặt SAU Standard ACL để các rule DROP theo nguồn vẫn có hiệu lực.
+  for n in dist1 dist2 core core2; do
+    NS "$n" iptables -A FORWARD -s 10.10.0.0/16 -d 10.10.0.0/16 -j ACCEPT \
+      -m comment --comment "BASE: permit inter-VLAN inside<->inside"
+  done
 
   # =========================================================
   # EXTENDED ACL (lọc theo dịch vụ) Inside -> DMZ

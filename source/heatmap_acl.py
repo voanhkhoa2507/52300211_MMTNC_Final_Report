@@ -242,6 +242,8 @@ def _policy_from_acl_sh(acl_text: str) -> list[FlowCell]:
     # Các nhãn luồng trong báo cáo:
     sources = ["Sales (VLAN20)", "Inside (VLAN khác)", "Internet", "DMZ"]
     services = [
+        "Finance (VLAN50)",
+        "HR (VLAN60)",
         "DMZ Web1 (80/443)",
         "DMZ Web2 (80/443)",
         "DMZ DNS (53)",
@@ -257,6 +259,23 @@ def _policy_from_acl_sh(acl_text: str) -> list[FlowCell]:
 
     def set_cell(src: str, dst: str, decision: Decision, layer: str, note: str) -> None:
         matrix[(src, dst)] = FlowCell(src, dst, decision, layer, note)
+
+    # --- Standard ACL (Sales -> Finance/HR) ---
+    for dst in ["Finance (VLAN50)", "HR (VLAN60)"]:
+        set_cell(
+            "Sales (VLAN20)",
+            dst,
+            "DENY",
+            "STD",
+            "Chặn theo nguồn: Sales không truy cập VLAN nhạy cảm",
+        )
+        set_cell(
+            "Inside (VLAN khác)",
+            dst,
+            "ALLOW",
+            "BASE",
+            "Cho phép liên VLAN nội bộ (không thuộc Sales)",
+        )
 
     # --- Extended ACL (Inside -> DMZ) ---
     # Sales cũng là 1 phần Inside => được phép dùng các dịch vụ DMZ hợp lệ (web/dns).
@@ -363,7 +382,15 @@ def _render_heatmap(cells: list[FlowCell], out_png: Path, out_csv: Path, extra_c
     sources = sorted({c.src for c in core_cells}, key=lambda s: ["Sales (VLAN20)", "Inside (VLAN khác)", "Internet", "DMZ"].index(s))
     services = sorted(
         {c.dst_service for c in core_cells},
-        key=lambda s: ["DMZ Web1 (80/443)", "DMZ Web2 (80/443)", "DMZ DNS (53)", "DMZ (dịch vụ khác)", "Internet"].index(s),
+        key=lambda s: [
+            "Finance (VLAN50)",
+            "HR (VLAN60)",
+            "DMZ Web1 (80/443)",
+            "DMZ Web2 (80/443)",
+            "DMZ DNS (53)",
+            "DMZ (dịch vụ khác)",
+            "Internet",
+        ].index(s),
     )
 
     # Build matrix
@@ -457,6 +484,8 @@ def _policy_from_live_iptables(core_ns: str, dist_ns: str) -> list[FlowCell]:
 
     sources = ["Sales (VLAN20)", "Inside (VLAN khác)", "Internet", "DMZ"]
     services = [
+        "Finance (VLAN50)",
+        "HR (VLAN60)",
         "DMZ Web1 (80/443)",
         "DMZ Web2 (80/443)",
         "DMZ DNS (53)",
@@ -468,6 +497,8 @@ def _policy_from_live_iptables(core_ns: str, dist_ns: str) -> list[FlowCell]:
     SALES_IP = "10.10.20.11"
     INSIDE_IP = "10.10.10.11"
     INTERNET_IP = "203.0.113.1"
+    FIN_HOST = "10.10.50.11"
+    HR_HOST = "10.10.60.11"
     DMZ_WEB1 = "172.16.200.11"
     DMZ_WEB2 = "172.16.200.12"
     DMZ_DNS = "172.16.200.53"
@@ -481,6 +512,10 @@ def _policy_from_live_iptables(core_ns: str, dist_ns: str) -> list[FlowCell]:
 
         if dst_service == "DMZ Web1 (80/443)":
             dst_ip, proto, port = DMZ_WEB1, "tcp", 80
+        elif dst_service == "Finance (VLAN50)":
+            dst_ip, proto, port = FIN_HOST, "tcp", 445
+        elif dst_service == "HR (VLAN60)":
+            dst_ip, proto, port = HR_HOST, "tcp", 445
         elif dst_service == "DMZ Web2 (80/443)":
             dst_ip, proto, port = DMZ_WEB2, "tcp", 80
         elif dst_service == "DMZ DNS (53)":
