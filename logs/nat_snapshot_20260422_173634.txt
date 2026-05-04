@@ -1,0 +1,66 @@
+=== NAT SNAPSHOT 20260422_173634 (ns=core) ===
+
+## iptables -t nat -S
+-P PREROUTING ACCEPT
+-P INPUT ACCEPT
+-P OUTPUT ACCEPT
+-P POSTROUTING ACCEPT
+-A PREROUTING -d 203.0.113.11/32 -i core-out -p tcp -m multiport --dports 80,443 -j DNAT --to-destination 172.16.200.11
+-A PREROUTING -d 203.0.113.12/32 -i core-out -p tcp -m multiport --dports 80,443 -j DNAT --to-destination 172.16.200.12
+-A PREROUTING -d 203.0.113.53/32 -i core-out -p udp -m udp --dport 53 -j DNAT --to-destination 172.16.200.53
+-A PREROUTING -d 203.0.113.53/32 -i core-out -p tcp -m tcp --dport 53 -j DNAT --to-destination 172.16.200.53
+-A POSTROUTING -s 10.10.0.0/16 -o core-out -j MASQUERADE
+-A POSTROUTING -s 172.16.200.0/24 -o core-out -j MASQUERADE
+
+
+## iptables -S FORWARD
+-P FORWARD DROP
+-A FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+-A FORWARD -i core-d1 -o core-d2 -j ACCEPT
+-A FORWARD -i core-d2 -o core-d1 -j ACCEPT
+-A FORWARD -d 172.16.200.11/32 -i core-out -o core-d1 -p tcp -m multiport --dports 80,443 -j ACCEPT
+-A FORWARD -d 172.16.200.12/32 -i core-out -o core-d1 -p tcp -m multiport --dports 80,443 -j ACCEPT
+-A FORWARD -d 172.16.200.53/32 -i core-out -o core-d1 -p udp -m udp --dport 53 -j ACCEPT
+-A FORWARD -d 172.16.200.53/32 -i core-out -o core-d1 -p tcp -m tcp --dport 53 -j ACCEPT
+-A FORWARD -s 10.10.0.0/16 -i core-d1 -o core-out -j ACCEPT
+-A FORWARD -s 10.10.0.0/16 -i core-d2 -o core-out -j ACCEPT
+-A FORWARD -s 172.16.200.0/24 -i core-d1 -o core-out -j ACCEPT
+
+
+## iptables -t nat -nvL
+Chain PREROUTING (policy ACCEPT 2 packets, 104 bytes)
+ pkts bytes target     prot opt in     out     source               destination         
+    0     0 DNAT       6    --  core-out *       0.0.0.0/0            203.0.113.11         multiport dports 80,443 to:172.16.200.11
+    0     0 DNAT       6    --  core-out *       0.0.0.0/0            203.0.113.12         multiport dports 80,443 to:172.16.200.12
+    0     0 DNAT       17   --  core-out *       0.0.0.0/0            203.0.113.53         udp dpt:53 to:172.16.200.53
+    0     0 DNAT       6    --  core-out *       0.0.0.0/0            203.0.113.53         tcp dpt:53 to:172.16.200.53
+
+Chain INPUT (policy ACCEPT 0 packets, 0 bytes)
+ pkts bytes target     prot opt in     out     source               destination         
+
+Chain OUTPUT (policy ACCEPT 0 packets, 0 bytes)
+ pkts bytes target     prot opt in     out     source               destination         
+
+Chain POSTROUTING (policy ACCEPT 2 packets, 136 bytes)
+ pkts bytes target     prot opt in     out     source               destination         
+    0     0 MASQUERADE  0    --  *      core-out  10.10.0.0/16         0.0.0.0/0           
+    0     0 MASQUERADE  0    --  *      core-out  172.16.200.0/24      0.0.0.0/0           
+
+
+## iptables -nvL FORWARD
+Chain FORWARD (policy DROP 0 packets, 0 bytes)
+ pkts bytes target     prot opt in     out     source               destination         
+    0     0 ACCEPT     0    --  *      *       0.0.0.0/0            0.0.0.0/0            ctstate RELATED,ESTABLISHED
+    0     0 ACCEPT     0    --  core-d1 core-d2  0.0.0.0/0            0.0.0.0/0           
+    0     0 ACCEPT     0    --  core-d2 core-d1  0.0.0.0/0            0.0.0.0/0           
+    0     0 ACCEPT     6    --  core-out core-d1  0.0.0.0/0            172.16.200.11        multiport dports 80,443
+    0     0 ACCEPT     6    --  core-out core-d1  0.0.0.0/0            172.16.200.12        multiport dports 80,443
+    0     0 ACCEPT     17   --  core-out core-d1  0.0.0.0/0            172.16.200.53        udp dpt:53
+    0     0 ACCEPT     6    --  core-out core-d1  0.0.0.0/0            172.16.200.53        tcp dpt:53
+    0     0 ACCEPT     0    --  core-d1 core-out  10.10.0.0/16         0.0.0.0/0           
+    0     0 ACCEPT     0    --  core-d2 core-out  10.10.0.0/16         0.0.0.0/0           
+    0     0 ACCEPT     0    --  core-d1 core-out  172.16.200.0/24      0.0.0.0/0           
+
+
+## conntrack (not installed)
+

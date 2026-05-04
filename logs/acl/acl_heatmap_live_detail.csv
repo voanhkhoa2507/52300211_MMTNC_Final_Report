@@ -1,0 +1,29 @@
+Nguồn,Đích/Dịch vụ,Kết quả,Lớp,Note(rule match/policy)
+Sales (VLAN20),Finance (VLAN50),DENY,STD,STD:
+Sales (VLAN20),HR (VLAN60),DENY,STD,STD:
+Sales (VLAN20),DMZ Web1 (80/443),ALLOW,EXT,EXT:
+Sales (VLAN20),DMZ Web2 (80/443),ALLOW,EXT,EXT:
+Sales (VLAN20),DMZ DNS (53),ALLOW,EXT,EXT:
+Sales (VLAN20),DMZ (dịch vụ khác),DENY,EXT,EXT:
+Sales (VLAN20),Internet,ALLOW,FW,FW:
+Inside (VLAN khác),Finance (VLAN50),ALLOW,,BASE:
+Inside (VLAN khác),HR (VLAN60),ALLOW,,BASE:
+Inside (VLAN khác),DMZ Web1 (80/443),ALLOW,EXT,EXT:
+Inside (VLAN khác),DMZ Web2 (80/443),ALLOW,EXT,EXT:
+Inside (VLAN khác),DMZ DNS (53),ALLOW,EXT,EXT:
+Inside (VLAN khác),DMZ (dịch vụ khác),DENY,EXT,EXT:
+Inside (VLAN khác),Internet,ALLOW,FW,FW:
+Internet,Finance (VLAN50),DENY,POLICY,Default policy DROP
+Internet,HR (VLAN60),DENY,POLICY,Default policy DROP
+Internet,DMZ Web1 (80/443),ALLOW,FW,FW:
+Internet,DMZ Web2 (80/443),ALLOW,FW,FW:
+Internet,DMZ DNS (53),ALLOW,FW,FW:
+Internet,DMZ (dịch vụ khác),DENY,FW,FW:
+Internet,Internet,N/A,,
+DMZ,Finance (VLAN50),ALLOW,FW,FW:
+DMZ,HR (VLAN60),ALLOW,FW,FW:
+DMZ,DMZ Web1 (80/443),ALLOW,FW,FW:
+DMZ,DMZ Web2 (80/443),ALLOW,FW,FW:
+DMZ,DMZ DNS (53),ALLOW,FW,FW:
+DMZ,DMZ (dịch vụ khác),DENY,FW,FW:
+DMZ,Internet,ALLOW,FW,FW:

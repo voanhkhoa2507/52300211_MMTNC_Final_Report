@@ -1,0 +1,10 @@
+timestamp,event,direction,proto,src_ip,src_port,dst_ip,dst_port,tag,raw
+    [NEW],NEW,OTHER,tcp,203.0.113.1,53946,203.0.113.11,80,vip_hit,[NEW] tcp      6 120 SYN_SENT src=203.0.113.1 dst=203.0.113.11 sport=53946 dport=80 [UNREPLIED] src=172.16.200.11 dst=203.0.113.1 sport=80 dport=53946
+ [UPDATE],,OTHER,tcp,203.0.113.1,53946,203.0.113.11,80,vip_hit,[UPDATE] tcp      6 60 SYN_RECV src=203.0.113.1 dst=203.0.113.11 sport=53946 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=53946
+ [UPDATE],,OTHER,tcp,203.0.113.1,53946,203.0.113.11,80,vip_hit,[UPDATE] tcp      6 432000 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=53946 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=53946 [ASSURED]
+ [UPDATE],,OTHER,tcp,203.0.113.1,53946,203.0.113.11,80,vip_hit,[UPDATE] tcp      6 120 FIN_WAIT src=203.0.113.1 dst=203.0.113.11 sport=53946 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=53946 [ASSURED]
+ [UPDATE],,OTHER,tcp,203.0.113.1,53946,203.0.113.11,80,vip_hit,[UPDATE] tcp      6 29 LAST_ACK src=203.0.113.1 dst=203.0.113.11 sport=53946 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=53946 [ASSURED]
+ [UPDATE],,OTHER,tcp,203.0.113.1,53946,203.0.113.11,80,vip_hit,[UPDATE] tcp      6 120 TIME_WAIT src=203.0.113.1 dst=203.0.113.11 sport=53946 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=53946 [ASSURED]
+    [NEW],NEW,OTHER,tcp,203.0.113.1,53950,203.0.113.11,80,vip_hit,[NEW] tcp      6 120 SYN_SENT src=203.0.113.1 dst=203.0.113.11 sport=53950 dport=80 [UNREPLIED] src=172.16.200.11 dst=203.0.113.1 sport=80 dport=53950
+ [UPDATE],,OTHER,tcp,203.0.113.1,53950,203.0.113.11,80,vip_hit,[UPDATE] tcp      6 59 SYN_RECV src=203.0.113.1 dst=203.0.113.11 sport=53950 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=53950
+ [UPDATE],,OTHER,tcp,203.0.113.1,53950,203.0.113.11,80,vip_hit,[UPDATE] tcp      6 432000 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=53950 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=53950 [ASSURED]

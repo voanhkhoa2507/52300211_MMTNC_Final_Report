@@ -1,0 +1,21 @@
+Nguồn,Đích/Dịch vụ,Kết quả,Lớp,Note(rule match/policy)
+Sales (VLAN20),DMZ Web1 (80/443),ALLOW,POLICY,Default policy ACCEPT
+Sales (VLAN20),DMZ Web2 (80/443),ALLOW,POLICY,Default policy ACCEPT
+Sales (VLAN20),DMZ DNS (53),ALLOW,POLICY,Default policy ACCEPT
+Sales (VLAN20),DMZ (dịch vụ khác),ALLOW,POLICY,Default policy ACCEPT
+Sales (VLAN20),Internet,ALLOW,POLICY,Default policy ACCEPT
+Inside (VLAN khác),DMZ Web1 (80/443),ALLOW,POLICY,Default policy ACCEPT
+Inside (VLAN khác),DMZ Web2 (80/443),ALLOW,POLICY,Default policy ACCEPT
+Inside (VLAN khác),DMZ DNS (53),ALLOW,POLICY,Default policy ACCEPT
+Inside (VLAN khác),DMZ (dịch vụ khác),ALLOW,POLICY,Default policy ACCEPT
+Inside (VLAN khác),Internet,ALLOW,POLICY,Default policy ACCEPT
+Internet,DMZ Web1 (80/443),ALLOW,POLICY,Default policy ACCEPT
+Internet,DMZ Web2 (80/443),ALLOW,POLICY,Default policy ACCEPT
+Internet,DMZ DNS (53),ALLOW,POLICY,Default policy ACCEPT
+Internet,DMZ (dịch vụ khác),ALLOW,POLICY,Default policy ACCEPT
+Internet,Internet,N/A,,
+DMZ,DMZ Web1 (80/443),ALLOW,POLICY,Default policy ACCEPT
+DMZ,DMZ Web2 (80/443),ALLOW,POLICY,Default policy ACCEPT
+DMZ,DMZ DNS (53),ALLOW,POLICY,Default policy ACCEPT
+DMZ,DMZ (dịch vụ khác),ALLOW,POLICY,Default policy ACCEPT
+DMZ,Internet,ALLOW,POLICY,Default policy ACCEPT

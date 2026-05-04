@@ -1,0 +1,214 @@
+=== NAT SNAPSHOT 20260424_043740 (ns=core) ===
+
+## iptables -t nat -S
+-P PREROUTING ACCEPT
+-P INPUT ACCEPT
+-P OUTPUT ACCEPT
+-P POSTROUTING ACCEPT
+-A PREROUTING -d 203.0.113.11/32 -p tcp -m multiport --dports 80,443 -m comment --comment "LB:VIP203.0.113.11" -j DNAT --to-destination 172.16.200.11
+-A PREROUTING -d 203.0.113.12/32 -i core-out -p tcp -m multiport --dports 80,443 -j DNAT --to-destination 172.16.200.12
+-A PREROUTING -d 203.0.113.53/32 -i core-out -p udp -m udp --dport 53 -j DNAT --to-destination 172.16.200.53
+-A PREROUTING -d 203.0.113.53/32 -i core-out -p tcp -m tcp --dport 53 -j DNAT --to-destination 172.16.200.53
+-A POSTROUTING -s 10.10.0.0/16 -o core-out -j MASQUERADE
+-A POSTROUTING -s 172.16.200.0/24 -o core-out -j MASQUERADE
+
+
+## iptables -S FORWARD
+-P FORWARD DROP
+-A FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+-A FORWARD -i core-d1 -o core-d2 -j ACCEPT
+-A FORWARD -i core-d2 -o core-d1 -j ACCEPT
+-A FORWARD -i core-d1b -o core-d2 -j ACCEPT
+-A FORWARD -i core-d2 -o core-d1b -j ACCEPT
+-A FORWARD -i core-d1 -o core-d2b -j ACCEPT
+-A FORWARD -i core-d2b -o core-d1 -j ACCEPT
+-A FORWARD -i core-d1b -o core-d2b -j ACCEPT
+-A FORWARD -i core-d2b -o core-d1b -j ACCEPT
+-A FORWARD -d 172.16.200.11/32 -i core-out -o core-d1 -p tcp -m multiport --dports 80,443 -j ACCEPT
+-A FORWARD -d 172.16.200.12/32 -i core-out -o core-d1 -p tcp -m multiport --dports 80,443 -j ACCEPT
+-A FORWARD -d 172.16.200.53/32 -i core-out -o core-d1 -p udp -m udp --dport 53 -j ACCEPT
+-A FORWARD -d 172.16.200.53/32 -i core-out -o core-d1 -p tcp -m tcp --dport 53 -j ACCEPT
+-A FORWARD -s 10.10.0.0/16 -i core-d1 -o core-out -j ACCEPT
+-A FORWARD -s 10.10.0.0/16 -i core-d1b -o core-out -j ACCEPT
+-A FORWARD -s 10.10.0.0/16 -i core-d2 -o core-out -j ACCEPT
+-A FORWARD -s 10.10.0.0/16 -i core-d2b -o core-out -j ACCEPT
+-A FORWARD -s 172.16.200.0/24 -i core-d1 -o core-out -j ACCEPT
+-A FORWARD -s 172.16.200.0/24 -i core-d1b -o core-out -j ACCEPT
+-A FORWARD -d 172.16.200.11/32 -i core-out -o core-d1 -p tcp -m multiport --dports 80,443 -m comment --comment "LB:ALLOW_VIP_TO_DMZ" -j ACCEPT
+
+
+## iptables -t nat -nvL
+Chain PREROUTING (policy ACCEPT 4 packets, 208 bytes)
+ pkts bytes target     prot opt in     out     source               destination         
+  123  7380 DNAT       6    --  *      *       0.0.0.0/0            203.0.113.11         multiport dports 80,443 /* LB:VIP203.0.113.11 */ to:172.16.200.11
+    0     0 DNAT       6    --  core-out *       0.0.0.0/0            203.0.113.12         multiport dports 80,443 to:172.16.200.12
+    0     0 DNAT       17   --  core-out *       0.0.0.0/0            203.0.113.53         udp dpt:53 to:172.16.200.53
+    0     0 DNAT       6    --  core-out *       0.0.0.0/0            203.0.113.53         tcp dpt:53 to:172.16.200.53
+
+Chain INPUT (policy ACCEPT 0 packets, 0 bytes)
+ pkts bytes target     prot opt in     out     source               destination         
+
+Chain OUTPUT (policy ACCEPT 0 packets, 0 bytes)
+ pkts bytes target     prot opt in     out     source               destination         
+
+Chain POSTROUTING (policy ACCEPT 129 packets, 7772 bytes)
+ pkts bytes target     prot opt in     out     source               destination         
+    0     0 MASQUERADE  0    --  *      core-out  10.10.0.0/16         0.0.0.0/0           
+    0     0 MASQUERADE  0    --  *      core-out  172.16.200.0/24      0.0.0.0/0           
+
+
+## iptables -nvL FORWARD
+Chain FORWARD (policy DROP 0 packets, 0 bytes)
+ pkts bytes target     prot opt in     out     source               destination         
+ 481K 7146M ACCEPT     0    --  *      *       0.0.0.0/0            0.0.0.0/0            ctstate RELATED,ESTABLISHED
+    0     0 ACCEPT     0    --  core-d1 core-d2  0.0.0.0/0            0.0.0.0/0           
+    0     0 ACCEPT     0    --  core-d2 core-d1  0.0.0.0/0            0.0.0.0/0           
+    0     0 ACCEPT     0    --  core-d1b core-d2  0.0.0.0/0            0.0.0.0/0           
+    0     0 ACCEPT     0    --  core-d2 core-d1b  0.0.0.0/0            0.0.0.0/0           
+    0     0 ACCEPT     0    --  core-d1 core-d2b  0.0.0.0/0            0.0.0.0/0           
+    0     0 ACCEPT     0    --  core-d2b core-d1  0.0.0.0/0            0.0.0.0/0           
+    0     0 ACCEPT     0    --  core-d1b core-d2b  0.0.0.0/0            0.0.0.0/0           
+    0     0 ACCEPT     0    --  core-d2b core-d1b  0.0.0.0/0            0.0.0.0/0           
+  373 22380 ACCEPT     6    --  core-out core-d1  0.0.0.0/0            172.16.200.11        multiport dports 80,443
+    0     0 ACCEPT     6    --  core-out core-d1  0.0.0.0/0            172.16.200.12        multiport dports 80,443
+    0     0 ACCEPT     17   --  core-out core-d1  0.0.0.0/0            172.16.200.53        udp dpt:53
+    0     0 ACCEPT     6    --  core-out core-d1  0.0.0.0/0            172.16.200.53        tcp dpt:53
+    0     0 ACCEPT     0    --  core-d1 core-out  10.10.0.0/16         0.0.0.0/0           
+    0     0 ACCEPT     0    --  core-d1b core-out  10.10.0.0/16         0.0.0.0/0           
+    0     0 ACCEPT     0    --  core-d2 core-out  10.10.0.0/16         0.0.0.0/0           
+    0     0 ACCEPT     0    --  core-d2b core-out  10.10.0.0/16         0.0.0.0/0           
+    0     0 ACCEPT     0    --  core-d1 core-out  172.16.200.0/24      0.0.0.0/0           
+    0     0 ACCEPT     0    --  core-d1b core-out  172.16.200.0/24      0.0.0.0/0           
+    0     0 ACCEPT     6    --  core-out core-d1  0.0.0.0/0            172.16.200.11        multiport dports 80,443 /* LB:ALLOW_VIP_TO_DMZ */
+
+
+## conntrack (first 200 lines)
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43888 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43888 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44006 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44006 [ASSURED] mark=0 use=1
+tcp      6 431998 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44128 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44128 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43830 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43830 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43712 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43712 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43492 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43492 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44534 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44534 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44518 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44518 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43820 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43820 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43470 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43470 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43646 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43646 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44556 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44556 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44028 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44028 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43628 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43628 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43552 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43552 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44114 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44114 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43638 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43638 [ASSURED] mark=0 use=1
+tcp      6 432000 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44362 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44362 [ASSURED] mark=0 use=2
+tcp      6 431998 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43672 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43672 [ASSURED] mark=0 use=1
+unknown  89 593 src=10.255.0.1 dst=224.0.0.5 [UNREPLIED] src=224.0.0.5 dst=10.255.0.1 mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43780 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43780 [ASSURED] mark=0 use=1
+tcp      6 431998 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44552 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44552 [ASSURED] mark=0 use=1
+tcp      6 431998 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44022 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44022 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44324 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44324 [ASSURED] mark=0 use=1
+unknown  89 594 src=10.255.0.6 dst=224.0.0.5 [UNREPLIED] src=224.0.0.5 dst=10.255.0.6 mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43842 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43842 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44592 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44592 [ASSURED] mark=0 use=1
+unknown  89 594 src=10.255.0.2 dst=224.0.0.5 [UNREPLIED] src=224.0.0.5 dst=10.255.0.2 mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43476 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43476 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44490 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44490 [ASSURED] mark=0 use=1
+tcp      6 431998 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43812 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43812 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43990 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43990 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44450 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44450 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43532 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43532 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43594 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43594 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44540 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44540 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44560 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44560 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44504 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44504 [ASSURED] mark=0 use=2
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44246 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44246 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44108 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44108 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43860 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43860 [ASSURED] mark=0 use=1
+unknown  89 593 src=10.255.0.5 dst=224.0.0.5 [UNREPLIED] src=224.0.0.5 dst=10.255.0.5 mark=0 use=1
+unknown  89 594 src=10.255.0.10 dst=224.0.0.5 [UNREPLIED] src=224.0.0.5 dst=10.255.0.10 mark=0 use=1
+tcp      6 431998 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43554 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43554 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43916 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43916 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43514 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43514 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43474 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43474 [ASSURED] mark=0 use=1
+tcp      6 431997 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44080 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44080 [ASSURED] mark=0 use=1
+tcp      6 431997 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44170 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44170 [ASSURED] mark=0 use=1
+tcp      6 431998 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43658 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43658 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44482 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44482 [ASSURED] mark=0 use=1
+tcp      6 431997 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44294 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44294 [ASSURED] mark=0 use=1
+tcp      6 431997 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43768 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43768 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43984 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43984 [ASSURED] mark=0 use=1
+tcp      6 431998 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44338 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44338 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43802 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43802 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43702 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43702 [ASSURED] mark=0 use=1
+tcp      6 431998 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44572 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44572 [ASSURED] mark=0 use=2
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43602 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43602 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44064 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44064 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43570 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43570 [ASSURED] mark=0 use=1
+tcp      6 431998 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43526 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43526 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44232 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44232 [ASSURED] mark=0 use=1
+tcp      6 431998 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44042 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44042 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43960 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43960 [ASSURED] mark=0 use=1
+tcp      6 431997 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44308 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44308 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44184 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44184 [ASSURED] mark=0 use=1
+tcp      6 431998 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43736 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43736 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43804 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43804 [ASSURED] mark=0 use=1
+tcp      6 431998 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44406 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44406 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44466 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44466 [ASSURED] mark=0 use=1
+unknown  89 593 src=10.255.0.13 dst=224.0.0.5 [UNREPLIED] src=224.0.0.5 dst=10.255.0.13 mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44424 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44424 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44264 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44264 [ASSURED] mark=0 use=1
+unknown  89 593 src=10.255.0.9 dst=224.0.0.5 [UNREPLIED] src=224.0.0.5 dst=10.255.0.9 mark=0 use=1
+tcp      6 431998 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43968 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43968 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43856 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43856 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44408 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44408 [ASSURED] mark=0 use=2
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43584 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43584 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43906 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43906 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43828 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43828 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44484 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44484 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43874 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43874 [ASSURED] mark=0 use=1
+tcp      6 431997 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43732 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43732 [ASSURED] mark=0 use=1
+tcp      6 431997 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43568 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43568 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43716 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43716 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44248 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44248 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44206 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44206 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44320 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44320 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44158 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44158 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44430 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44430 [ASSURED] mark=0 use=1
+tcp      6 431998 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43686 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43686 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44052 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44052 [ASSURED] mark=0 use=1
+tcp      6 431997 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43752 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43752 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44588 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44588 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44100 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44100 [ASSURED] mark=0 use=1
+tcp      6 431998 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44120 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44120 [ASSURED] mark=0 use=2
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43618 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43618 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44190 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44190 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44218 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44218 [ASSURED] mark=0 use=1
+tcp      6 431997 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43504 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43504 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44378 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44378 [ASSURED] mark=0 use=1
+tcp      6 431997 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43472 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43472 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43946 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43946 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43932 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43932 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44126 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44126 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44090 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44090 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43604 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43604 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44350 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44350 [ASSURED] mark=0 use=1
+tcp      6 431998 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44032 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44032 [ASSURED] mark=0 use=1
+tcp      6 431998 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43520 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43520 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44492 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44492 [ASSURED] mark=0 use=1
+tcp      6 431997 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43796 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43796 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43542 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43542 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44146 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44146 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44056 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44056 [ASSURED] mark=0 use=2
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44142 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44142 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44070 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44070 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44392 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44392 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43512 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43512 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44586 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44586 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43516 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43516 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44078 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44078 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44048 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44048 [ASSURED] mark=0 use=1
+tcp      6 431998 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44280 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44280 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=43898 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=43898 [ASSURED] mark=0 use=1
+tcp      6 431999 ESTABLISHED src=203.0.113.1 dst=203.0.113.11 sport=44442 dport=80 src=172.16.200.11 dst=203.0.113.1 sport=80 dport=44442 [ASSURED] mark=0 use=1
+unknown  89 594 src=10.255.0.14 dst=224.0.0.5 [UNREPLIED] src=224.0.0.5 dst=10.255.0.14 mark=0 use=1
+

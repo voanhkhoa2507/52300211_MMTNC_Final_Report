@@ -1,0 +1,5 @@
+case,throughput_mbps_tcp,ping_avg_ms
+no_nat_no_acl,-1.000,0.208
+nat_only,17699.162,0.287
+acl_only,15941.525,0.253
+nat_and_acl,16207.190,0.303
