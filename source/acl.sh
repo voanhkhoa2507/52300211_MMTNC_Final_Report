@@ -50,15 +50,16 @@ apply_acl() {
   done
 
   # =========================================================
-  # STANDARD ACL (lọc theo nguồn) 
-  # - Chặn Sales (10.10.20.0/24) truy cập DMZ (172.16.200.0/24)
-  # - Áp gần đích (dist1 là nơi nối DMZ)
+  # STANDARD ACL (lọc theo nguồn)
+  #
+  # Ghi chú "tính thực tế":
+  # - Trong vận hành, người dùng nội bộ vẫn cần truy cập dịch vụ DMZ (web/dns) để sử dụng.
+  # - Việc "chặn Sales vào DMZ nhưng lại cho Internet vào" dễ gây cảm giác không hợp lý.
+  # - Vì vậy, bài lab này KHÔNG chặn Sales -> DMZ theo subnet nữa.
+  # - Standard ACL sẽ được thể hiện ở các chương/biểu đồ khác (nếu cần), còn phần DMZ
+  #   dùng Extended ACL theo dịch vụ (80/443, 53) để minh hoạ chính sách thực tế hơn.
   # =========================================================
-  echo "[ACL] Standard ACL: chặn Sales -> DMZ (lọc theo nguồn)"
-  NS dist1 iptables -A FORWARD -s 10.10.20.0/24 -d 172.16.200.0/24 -j DROP \
-    -m comment --comment "STD: Deny Sales VLAN20 -> DMZ"
-
-  # Các luồng inside -> DMZ còn lại sẽ được kiểm soát bởi Extended ACL bên dưới.
+  echo "[ACL] Standard ACL: (đã bỏ chặn Sales -> DMZ để hợp lý thực tế)"
 
   # =========================================================
   # EXTENDED ACL (lọc theo dịch vụ) Inside -> DMZ

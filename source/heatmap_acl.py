@@ -232,7 +232,6 @@ def _policy_from_acl_sh(acl_text: str) -> list[FlowCell]:
     Trích policy ở mức "báo cáo" từ các comment trong acl.sh.
 
     Hiện tại acl.sh có các rule cốt lõi:
-    - STD: Deny Sales VLAN20 -> DMZ (mọi dịch vụ)
     - EXT: Allow Inside -> dmz_web1/2 tcp 80/443; Allow Inside -> dmz_dns 53; Deny Inside -> DMZ other
     - FW : Allow Internet -> dmz_web1/2 tcp 80/443; Allow Internet -> dmz_dns 53; Deny Internet -> DMZ other
     - FW : Allow Inside -> Internet; Allow DMZ -> Internet
@@ -259,47 +258,19 @@ def _policy_from_acl_sh(acl_text: str) -> list[FlowCell]:
     def set_cell(src: str, dst: str, decision: Decision, layer: str, note: str) -> None:
         matrix[(src, dst)] = FlowCell(src, dst, decision, layer, note)
 
-    # --- Standard ACL ---
-    set_cell(
-        "Sales (VLAN20)",
-        "DMZ Web1 (80/443)",
-        "DENY",
-        "STD",
-        "Chặn theo nguồn: Sales -> DMZ",
-    )
-    set_cell(
-        "Sales (VLAN20)",
-        "DMZ Web2 (80/443)",
-        "DENY",
-        "STD",
-        "Chặn theo nguồn: Sales -> DMZ",
-    )
-    set_cell(
-        "Sales (VLAN20)",
-        "DMZ DNS (53)",
-        "DENY",
-        "STD",
-        "Chặn theo nguồn: Sales -> DMZ",
-    )
-    set_cell(
-        "Sales (VLAN20)",
-        "DMZ (dịch vụ khác)",
-        "DENY",
-        "STD",
-        "Chặn theo nguồn: Sales -> DMZ",
-    )
-
     # --- Extended ACL (Inside -> DMZ) ---
-    for dst in ["DMZ Web1 (80/443)", "DMZ Web2 (80/443)"]:
-        set_cell(
-            "Inside (VLAN khác)",
-            dst,
-            "ALLOW",
-            "EXT",
-            "Chỉ cho TCP 80/443 tới Web DMZ",
-        )
+    # Sales cũng là 1 phần Inside => được phép dùng các dịch vụ DMZ hợp lệ (web/dns).
+    for src in ["Sales (VLAN20)", "Inside (VLAN khác)"]:
+        for dst in ["DMZ Web1 (80/443)", "DMZ Web2 (80/443)"]:
+            set_cell(
+                src,
+                dst,
+                "ALLOW",
+                "EXT",
+                "Chỉ cho TCP 80/443 tới Web DMZ",
+            )
     set_cell(
-        "Inside (VLAN khác)",
+        "Sales (VLAN20)",
         "DMZ DNS (53)",
         "ALLOW",
         "EXT",
@@ -307,11 +278,19 @@ def _policy_from_acl_sh(acl_text: str) -> list[FlowCell]:
     )
     set_cell(
         "Inside (VLAN khác)",
-        "DMZ (dịch vụ khác)",
-        "DENY",
+        "DMZ DNS (53)",
+        "ALLOW",
         "EXT",
-        "Mặc định chặn inside -> DMZ dịch vụ khác",
+        "Chỉ cho DNS (UDP/TCP 53) tới DMZ DNS",
     )
+    for src in ["Sales (VLAN20)", "Inside (VLAN khác)"]:
+        set_cell(
+            src,
+            "DMZ (dịch vụ khác)",
+            "DENY",
+            "EXT",
+            "Mặc định chặn inside -> DMZ dịch vụ khác",
+        )
 
     # --- Boundary firewall (Internet -> DMZ) ---
     for dst in ["DMZ Web1 (80/443)", "DMZ Web2 (80/443)"]:
@@ -370,18 +349,6 @@ def _policy_from_acl_sh(acl_text: str) -> list[FlowCell]:
         for d in services:
             cells.append(matrix[(s, d)])
 
-    # Thêm ghi chú nhắc: policy sync với acl.sh
-    if not re.search(r"STD:\s*Deny\s*Sales", acl_text):
-        # không fail; chỉ để người dùng biết nếu acl.sh đã đổi lớn.
-        cells.append(
-            FlowCell(
-                src="(Cảnh báo)",
-                dst_service="acl.sh",
-                decision="N/A",
-                layer="",
-                note="Không tìm thấy comment 'STD: Deny Sales' trong acl.sh (có thể bạn đã chỉnh script).",
-            )
-        )
     return cells
 
 
